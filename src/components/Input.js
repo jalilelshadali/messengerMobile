@@ -4,6 +4,12 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useTheme } from "../theme";
 
+// IMPORTANT (Android keyboard): this component must NOT re-render or change
+// the wrapping View's style in response to focus. A focus-driven setState
+// that toggles borderColor / shadowColor on the View around a <TextInput>
+// makes Android drop the input connection and dismiss the keyboard the
+// instant it opens. So: no `focused` state, static border, no shadow, and
+// no `lineHeight` on the TextInput style (also an Android focus hazard).
 export default function Input({
   label,
   value,
@@ -20,11 +26,10 @@ export default function Input({
   style,
 }) {
   const t = useTheme();
-  const [focused, setFocused] = useState(false);
   const [hidden, setHidden] = useState(secureTextEntry);
 
   const hasError = Boolean(error) || invalid;
-  const borderColor = hasError ? t.color.danger : focused ? t.color.accent : t.color.border;
+  const borderColor = hasError ? t.color.danger : t.color.border;
 
   return (
     <View style={style}>
@@ -40,28 +45,23 @@ export default function Input({
             borderRadius: t.radius.md,
             backgroundColor: t.color.surface,
             borderColor,
-            borderWidth: 1.5,
           },
-          focused && !hasError && { shadowColor: t.color.accent },
         ]}
       >
         <TextInput
-          style={[t.typography.body, styles.input, { color: t.color.textPrimary }]}
+          style={[styles.input, { color: t.color.textPrimary, fontFamily: t.typography.body.fontFamily }]}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={t.color.textSecondary}
           secureTextEntry={hidden}
           autoCapitalize={autoCapitalize}
+          autoCorrect={false}
           keyboardType={keyboardType}
           autoFocus={autoFocus}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
           onSubmitEditing={onSubmitEditing}
           returnKeyType={returnKeyType}
-          textAlignVertical="center"
           underlineColorAndroid="transparent"
-          includeFontPadding={false}
         />
         {secureTextEntry ? (
           <Pressable onPress={() => setHidden((h) => !h)} hitSlop={10} style={styles.eye}>
@@ -90,8 +90,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 14,
+    borderWidth: 1.5,
   },
-  input: { flex: 1, paddingVertical: 0 },
+  input: { flex: 1, paddingVertical: 0, fontSize: 16 },
   eye: { paddingLeft: 8 },
   errorRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
   errorText: { fontFamily: "Archivo-Regular", fontSize: 12 },
