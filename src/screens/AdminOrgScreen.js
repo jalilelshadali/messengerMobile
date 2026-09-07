@@ -1,172 +1,125 @@
 import { useCallback, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
+import Button from "../components/Button";
+import Card from "../components/Card";
+import EmptyState from "../components/EmptyState";
+import Input from "../components/Input";
 import { createSection, createUnit, fetchUnits } from "../api/org";
+import { useTheme } from "../theme";
 
 function UnitCard({ unit, onSectionCreated }) {
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const t = useTheme();
+  const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  async function handleCreate() {
+  async function create() {
     if (!name.trim()) return;
-    setIsCreating(true);
+    setCreating(true);
     try {
       await createSection(unit.id, name.trim());
       setName("");
-      setIsFormOpen(false);
+      setFormOpen(false);
       onSectionCreated();
     } finally {
-      setIsCreating(false);
+      setCreating(false);
     }
   }
 
   return (
-    <View style={styles.unitCard}>
+    <Card style={styles.card}>
       <View style={styles.unitHeader}>
-        <Text style={styles.unitTitle}>{unit.name}</Text>
-        <Text style={styles.unitMeta}>{unit.member_count} üzv</Text>
+        <Text style={[t.typography.title, { fontSize: 16, color: t.color.textPrimary }]}>{unit.name}</Text>
+        <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>{unit.member_count} üzv</Text>
       </View>
 
-      {unit.sections.map((section) => (
-        <View key={section.id} style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>{section.name}</Text>
-          <Text style={styles.sectionMeta}>{section.member_count} üzv</Text>
+      {(unit.sections || []).map((s) => (
+        <View key={s.id} style={[styles.sectionRow, { borderTopColor: t.color.border }]}>
+          <Text style={[t.typography.bodySm, { color: t.color.textPrimary }]}>{s.name}</Text>
+          <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>{s.member_count} üzv</Text>
         </View>
       ))}
 
-      {isFormOpen ? (
+      {formOpen ? (
         <View style={styles.inlineForm}>
-          <TextInput
-            style={styles.input}
-            placeholder="Möhtərəm Loja adı"
-            placeholderTextColor="#8b949e"
-            value={name}
-            onChangeText={setName}
-          />
-          <Pressable style={styles.smallButton} onPress={handleCreate} disabled={isCreating}>
-            {isCreating ? (
-              <ActivityIndicator color="#0d1117" size="small" />
-            ) : (
-              <Text style={styles.smallButtonText}>Yarat</Text>
-            )}
-          </Pressable>
+          <Input value={name} onChangeText={setName} placeholder="Möhtərəm Loja adı" style={{ flex: 1 }} />
+          <Button title="Yarat" onPress={create} loading={creating} style={{ paddingHorizontal: 14 }} />
         </View>
       ) : (
-        <Pressable onPress={() => setIsFormOpen(true)}>
-          <Text style={styles.addSectionLink}>+ Yeni Möhtərəm Loja</Text>
+        <Pressable onPress={() => setFormOpen(true)} style={{ marginTop: 10 }}>
+          <Text style={[t.typography.caption, { color: t.color.accent }]}>+ Yeni Möhtərəm Loja</Text>
         </Pressable>
       )}
-    </View>
+    </Card>
   );
 }
 
 export default function AdminOrgScreen() {
+  const t = useTheme();
   const [units, setUnits] = useState([]);
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const [name, setName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(() => {
-    fetchUnits().then(({ data }) => setUnits(data));
+    fetchUnits().then(({ data }) => setUnits(data)).catch(() => {});
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load])
-  );
+  useFocusEffect(useCallback(() => load(), [load]));
 
-  async function handleCreateUnit() {
+  async function createUnitHandler() {
     if (!name.trim()) return;
-    setIsCreating(true);
+    setCreating(true);
     try {
       await createUnit(name.trim());
       setName("");
-      setIsFormOpen(false);
+      setFormOpen(false);
       load();
     } finally {
-      setIsCreating(false);
+      setCreating(false);
     }
   }
 
   return (
-    <View style={styles.container}>
-      <Pressable style={styles.toggle} onPress={() => setIsFormOpen((prev) => !prev)}>
-        <Text style={styles.toggleText}>{isFormOpen ? "Bağla" : "+ Yeni Grand Loja"}</Text>
-      </Pressable>
-
-      {isFormOpen && (
-        <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Grand Loja adı"
-            placeholderTextColor="#8b949e"
-            value={name}
-            onChangeText={setName}
-          />
-          <Pressable style={styles.createButton} onPress={handleCreateUnit} disabled={isCreating}>
-            {isCreating ? (
-              <ActivityIndicator color="#0d1117" />
-            ) : (
-              <Text style={styles.createButtonText}>Yarat</Text>
-            )}
-          </Pressable>
-        </View>
-      )}
-
+    <View style={{ flex: 1, backgroundColor: t.color.bg }}>
       <FlatList
         data={units}
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => <UnitCard unit={item} onSectionCreated={load} />}
-        contentContainerStyle={{ padding: 12 }}
-        ListEmptyComponent={<Text style={styles.empty}>Hələ Grand Loja yoxdur</Text>}
+        contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1 }}
+        ListHeaderComponent={
+          <View style={{ marginBottom: 4 }}>
+            <Button
+              title={formOpen ? "Bağla" : "Yeni Böyük Loja"}
+              variant={formOpen ? "ghost" : "primary"}
+              onPress={() => setFormOpen((v) => !v)}
+            />
+            {formOpen ? (
+              <Card style={{ marginTop: 12, gap: 10 }}>
+                <Input label="Böyük Loja adı" value={name} onChangeText={setName} />
+                <Button title="Yarat" onPress={createUnitHandler} loading={creating} />
+              </Card>
+            ) : null}
+          </View>
+        }
+        ListEmptyComponent={<EmptyState icon="business-outline" title="Hələ Böyük Loja yoxdur" />}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0d1117" },
-  toggle: { padding: 14, alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#30363d" },
-  toggleText: { color: "#d4af37", fontWeight: "700" },
-  form: { padding: 16, borderBottomWidth: 1, borderBottomColor: "#30363d" },
-  input: {
-    backgroundColor: "#161b22",
-    color: "#fff",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#30363d",
-  },
-  createButton: { backgroundColor: "#d4af37", borderRadius: 8, padding: 14, alignItems: "center" },
-  createButtonText: { color: "#0d1117", fontWeight: "700" },
-  unitCard: {
-    backgroundColor: "#161b22",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#30363d",
-    padding: 14,
-    marginBottom: 12,
-  },
+  card: {},
   unitHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  unitTitle: { color: "#d4af37", fontSize: 16, fontWeight: "700" },
-  unitMeta: { color: "#8b949e", fontSize: 12 },
   sectionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     paddingVertical: 8,
     paddingLeft: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#0d1117",
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  sectionTitle: { color: "#fff" },
-  sectionMeta: { color: "#8b949e", fontSize: 12 },
-  addSectionLink: { color: "#d4af37", marginTop: 10, fontSize: 13 },
-  inlineForm: { flexDirection: "row", gap: 8, marginTop: 10 },
-  smallButton: { backgroundColor: "#d4af37", borderRadius: 6, paddingHorizontal: 14, justifyContent: "center" },
-  smallButtonText: { color: "#0d1117", fontWeight: "700", fontSize: 12 },
-  empty: { color: "#8b949e", textAlign: "center", marginTop: 40 },
+  inlineForm: { flexDirection: "row", gap: 8, marginTop: 10, alignItems: "flex-start" },
 });

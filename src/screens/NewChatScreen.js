@@ -1,125 +1,148 @@
 import { useEffect, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import Avatar from "../components/Avatar";
+import Button from "../components/Button";
+import EmptyState from "../components/EmptyState";
+import Input from "../components/Input";
+import SearchBar from "../components/SearchBar";
 import { searchUsers } from "../api/auth";
 import { createGroupConversation, startDirectConversation } from "../api/chat";
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../theme";
+
+function nameOf(u) {
+  return `${u.first_name || ""} ${u.last_name || ""}`.trim() || u.username;
+}
 
 export default function NewChatScreen({ navigation }) {
+  const t = useTheme();
+  const insets = useSafeAreaInsets();
   const { user: me } = useAuth();
+
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState([]);
+  const [selected, setSelected] = useState([]); // user objects
   const [groupName, setGroupName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const canGroup = me.is_staff;
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      searchUsers(search).then(({ data }) => setUsers(data));
+    const id = setTimeout(() => {
+      searchUsers(search).then(({ data }) => setUsers(data)).catch(() => {});
     }, 250);
-    return () => clearTimeout(timeout);
+    return () => clearTimeout(id);
   }, [search]);
 
-  async function openDirectChat(otherUser) {
-    const { data } = await startDirectConversation(otherUser.id);
-    navigation.replace("Chat", { conversationId: data.id, title: otherUser.username });
-  }
-
-  function toggle(userId) {
-    setSelected((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
-  }
-
-  async function handleStart() {
-    if (selected.length === 1) {
-      const other = users.find((u) => u.id === selected[0]);
-      await openDirectChat(other);
-    } else if (selected.length > 1) {
-      const { data } = await createGroupConversation(groupName || "Qrup", selected);
-      navigation.replace("Chat", { conversationId: data.id, title: data.name, isGroup: true });
+  async function openDirect(u) {
+    setBusy(true);
+    try {
+      const { data } = await startDirectConversation(u.id);
+      navigation.replace("Chat", { conversationId: data.id, title: nameOf(u), isGroup: false });
+    } finally {
+      setBusy(false);
     }
   }
 
-  if (!me.is_staff) {
-    return (
-      <View style={styles.container}>
-        <TextInput
-          style={styles.input}
-          placeholder="Üzv axtar..."
-          placeholderTextColor="#8b949e"
-          autoCapitalize="none"
-          value={search}
-          onChangeText={setSearch}
-        />
-        <FlatList
-          data={users}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => (
-            <Pressable style={styles.row} onPress={() => openDirectChat(item)}>
-              <Text style={styles.rowTitle}>
-                {item.first_name} {item.last_name}
-              </Text>
-            </Pressable>
-          )}
-          ListEmptyComponent={<Text style={styles.empty}>Üzv tapılmadı</Text>}
-        />
-      </View>
+  function toggle(u) {
+    setSelected((prev) =>
+      prev.some((x) => x.id === u.id) ? prev.filter((x) => x.id !== u.id) : [...prev, u]
     );
   }
 
+  async function createGroup() {
+    if (selected.length < 2) return;
+    setBusy(true);
+    try {
+      const { data } = await createGroupConversation(
+        groupName.trim() || "Qrup",
+        selected.map((u) => u.id)
+      );
+      navigation.replace("Chat", { conversationId: data.id, title: data.name, isGroup: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <View style={styles.container}>
-      <TextInput
-        style={styles.input}
-        placeholder="Üzv axtar..."
-        placeholderTextColor="#8b949e"
-        autoCapitalize="none"
-        value={search}
-        onChangeText={setSearch}
-      />
-      {selected.length > 1 && (
-        <TextInput
-          style={styles.input}
-          placeholder="Qrup adı"
-          placeholderTextColor="#8b949e"
-          value={groupName}
-          onChangeText={setGroupName}
-        />
-      )}
+    <View style={{ flex: 1, backgroundColor: t.color.bg }}>
+      <View style={styles.top}>
+        <SearchBar value={search} onChangeText={setSearch} placeholder="Ad və ya @istifadəçi adı" autoFocus />
+      </View>
+
+      {canGroup && selected.length > 0 ? (
+        <View style={styles.selectedBar}>
+          <FlatList
+            horizontal
+            data={selected}
+            keyExtractor={(u) => String(u.id)}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}
+            renderItem={({ item }) => (
+              <Pressable onPress={() => toggle(item)} style={[styles.selChip, { backgroundColor: t.color.accentMuted }]}>
+                <Text style={[t.typography.caption, { color: t.color.textPrimary }]}>{nameOf(item)}</Text>
+                <Ionicons name="close" size={13} color={t.color.textSecondary} />
+              </Pressable>
+            )}
+          />
+        </View>
+      ) : null}
+
       <FlatList
         data={users}
-        keyExtractor={(item) => String(item.id)}
-        renderItem={({ item }) => (
-          <Pressable style={styles.row} onPress={() => toggle(item.id)}>
-            <Text style={styles.rowTitle}>
-              {selected.includes(item.id) ? "☑ " : "☐ "}
-              {item.first_name} {item.last_name}
-            </Text>
-          </Pressable>
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>Üzv tapılmadı</Text>}
+        keyExtractor={(u) => String(u.id)}
+        keyboardShouldPersistTaps="handled"
+        renderItem={({ item }) => {
+          const isSel = selected.some((x) => x.id === item.id);
+          return (
+            <Pressable
+              onPress={() => (canGroup ? toggle(item) : openDirect(item))}
+              style={({ pressed }) => [
+                styles.row,
+                { backgroundColor: pressed ? t.color.surfaceAlt : t.color.surface },
+              ]}
+            >
+              <Avatar name={nameOf(item)} size={44} />
+              <View style={{ flex: 1 }}>
+                <Text style={[t.typography.bodySm, { fontSize: 16, color: t.color.textPrimary }]}>{nameOf(item)}</Text>
+                <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>@{item.username}</Text>
+              </View>
+              {canGroup ? (
+                <Ionicons
+                  name={isSel ? "checkmark-circle" : "ellipse-outline"}
+                  size={22}
+                  color={isSel ? t.color.accent : t.color.border}
+                />
+              ) : (
+                <Ionicons name="chevron-forward" size={18} color={t.color.textSecondary} />
+              )}
+            </Pressable>
+          );
+        }}
+        ItemSeparatorComponent={() => <View style={[styles.sep, { backgroundColor: t.color.border }]} />}
+        ListEmptyComponent={
+          <EmptyState icon="person-outline" title="Üzv tapılmadı" hint="Başqa ad yazın" />
+        }
       />
-      {selected.length > 0 && (
-        <Pressable style={styles.button} onPress={handleStart}>
-          <Text style={styles.buttonText}>{selected.length === 1 ? "Söhbətə başla" : "Qrup yarat"}</Text>
-        </Pressable>
-      )}
+
+      {canGroup && selected.length >= 2 ? (
+        <View style={[styles.footer, { backgroundColor: t.color.surface, borderTopColor: t.color.border, paddingBottom: insets.bottom || 12 }]}>
+          <Input label={`${selected.length} nəfər seçildi · qrup adı`} value={groupName} onChangeText={setGroupName} placeholder="Qrup adı" />
+          <Button title="Qrup yarat" onPress={createGroup} loading={busy} style={{ marginTop: 10 }} />
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0d1117", padding: 12 },
-  input: {
-    backgroundColor: "#161b22",
-    color: "#fff",
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: "#30363d",
-  },
-  row: { padding: 14, borderBottomWidth: 1, borderBottomColor: "#30363d" },
-  rowTitle: { color: "#fff" },
-  empty: { color: "#8b949e", textAlign: "center", marginTop: 24 },
-  button: { backgroundColor: "#d4af37", borderRadius: 8, padding: 14, alignItems: "center", marginTop: 12 },
-  buttonText: { color: "#0d1117", fontWeight: "700" },
+  top: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
+  selectedBar: { paddingVertical: 8 },
+  selChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, height: 30, borderRadius: 999 },
+  row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 10 },
+  sep: { height: StyleSheet.hairlineWidth, marginLeft: 72 },
+  footer: { padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
 });

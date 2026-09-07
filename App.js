@@ -13,10 +13,11 @@ import {
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
+import { SettingsProvider, useSettings } from "./src/context/SettingsContext";
 import RootNavigator from "./src/navigation/RootNavigator";
+import { navigationTheme } from "./src/navigation/navTheme";
 import { ThemeProvider, useTheme } from "./src/theme";
 
-// App arxa plana keçib bu qədər müddətdən çox qalıbsa, qayıdanda PIN soruşulur.
 const RELOCK_AFTER_MS = 60_000;
 
 function AppShell() {
@@ -40,10 +41,23 @@ function AppShell() {
   }, [lockNow, locked]);
 
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navigationTheme(t)}>
       <StatusBar style={t.scheme === "dark" ? "light" : "dark"} />
       <RootNavigator />
     </NavigationContainer>
+  );
+}
+
+// Tema rejimi Parametrlərdən gəlir (sistem/işıqlı/qaranlıq).
+function Themed() {
+  const { settings } = useSettings();
+  const forced = settings.themeMode === "system" ? undefined : settings.themeMode;
+  return (
+    <ThemeProvider scheme={forced}>
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 
@@ -56,7 +70,6 @@ export default function App() {
   });
 
   useEffect(() => {
-    // Screenshot/ekran yazısı web-də bloklana bilmir — yalnız native.
     if (Platform.OS !== "web") {
       preventScreenCaptureAsync().catch(() => {});
     }
@@ -68,11 +81,9 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider>
-        <AuthProvider>
-          <AppShell />
-        </AuthProvider>
-      </ThemeProvider>
+      <SettingsProvider>
+        <Themed />
+      </SettingsProvider>
     </SafeAreaProvider>
   );
 }

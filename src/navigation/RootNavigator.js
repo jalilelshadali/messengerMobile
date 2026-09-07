@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { ActivityIndicator, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
+import { stackScreenOptions, tabScreenOptions } from "./navTheme";
 import PinScreen from "../screens/PinScreen";
 import AdminBooksScreen from "../screens/AdminBooksScreen";
 import AdminHomeScreen from "../screens/AdminHomeScreen";
@@ -18,43 +19,31 @@ import GroupInfoScreen from "../screens/GroupInfoScreen";
 import LibraryScreen from "../screens/LibraryScreen";
 import LoginScreen from "../screens/LoginScreen";
 import NewChatScreen from "../screens/NewChatScreen";
+import ChangePinScreen from "../screens/ChangePinScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import SecurityScreen from "../screens/SecurityScreen";
+import SettingsScreen from "../screens/SettingsScreen";
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-const screenOptions = {
-  headerStyle: { backgroundColor: "#0d1117" },
-  headerTintColor: "#d4af37",
-};
-
 function ChatsStack() {
+  const t = useTheme();
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
-      <Stack.Screen
-        name="ChatList"
-        component={ChatListScreen}
-        options={({ navigation }) => ({
-          title: "Söhbətlər",
-          headerRight: () => (
-            <Pressable onPress={() => navigation.navigate("NewChat")} hitSlop={10}>
-              <Ionicons name="create-outline" size={24} color="#d4af37" />
-            </Pressable>
-          ),
-        })}
-      />
+    <Stack.Navigator screenOptions={stackScreenOptions(t)}>
+      <Stack.Screen name="ChatList" component={ChatListScreen} options={{ headerShown: false }} />
       <Stack.Screen name="NewChat" component={NewChatScreen} options={{ title: "Yeni söhbət" }} />
-      <Stack.Screen name="Chat" component={ChatScreen} />
+      <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
       <Stack.Screen name="GroupInfo" component={GroupInfoScreen} options={{ title: "Qrup məlumatı" }} />
     </Stack.Navigator>
   );
 }
 
 function CalendarStack() {
+  const t = useTheme();
   const { user } = useAuth();
-
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
+    <Stack.Navigator screenOptions={stackScreenOptions(t)}>
       <Stack.Screen
         name="CalendarHome"
         component={CalendarScreen}
@@ -62,9 +51,12 @@ function CalendarStack() {
           title: "Təqvim",
           headerRight: user.is_staff
             ? () => (
-                <Pressable onPress={() => navigation.navigate("CreateMeeting")} hitSlop={10}>
-                  <Ionicons name="add-circle-outline" size={24} color="#d4af37" />
-                </Pressable>
+                <Ionicons
+                  name="add-circle-outline"
+                  size={24}
+                  color={t.color.accent}
+                  onPress={() => navigation.navigate("CreateMeeting")}
+                />
               )
             : undefined,
         })}
@@ -74,9 +66,22 @@ function CalendarStack() {
   );
 }
 
-function AdminStack() {
+function ProfileStack() {
+  const t = useTheme();
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
+    <Stack.Navigator screenOptions={stackScreenOptions(t)}>
+      <Stack.Screen name="ProfileHome" component={ProfileScreen} options={{ title: "Profil" }} />
+      <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: "Parametrlər" }} />
+      <Stack.Screen name="Security" component={SecurityScreen} options={{ title: "Təhlükəsizlik" }} />
+      <Stack.Screen name="ChangePin" component={ChangePinScreen} options={{ headerShown: false }} />
+    </Stack.Navigator>
+  );
+}
+
+function AdminStack() {
+  const t = useTheme();
+  return (
+    <Stack.Navigator screenOptions={stackScreenOptions(t)}>
       <Stack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: "Admin" }} />
       <Stack.Screen name="AdminUsers" component={AdminUsersScreen} options={{ title: "Üzvlər" }} />
       <Stack.Screen name="AdminOrg" component={AdminOrgScreen} options={{ title: "Möhtərəm Lojalar" }} />
@@ -86,22 +91,15 @@ function AdminStack() {
 }
 
 function MainTabs() {
+  const t = useTheme();
   const { user } = useAuth();
 
   return (
-    <Tab.Navigator
-      screenOptions={{
-        ...screenOptions,
-        tabBarStyle: { backgroundColor: "#0d1117", borderTopColor: "#30363d" },
-        tabBarActiveTintColor: "#d4af37",
-        tabBarInactiveTintColor: "#8b949e",
-      }}
-    >
+    <Tab.Navigator screenOptions={{ ...tabScreenOptions(t), headerShown: false }}>
       <Tab.Screen
         name="Chats"
         component={ChatsStack}
         options={{
-          headerShown: false,
           title: "Söhbətlər",
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons name={focused ? "chatbubbles" : "chatbubbles-outline"} size={size} color={color} />
@@ -112,7 +110,6 @@ function MainTabs() {
         name="Calendar"
         component={CalendarStack}
         options={{
-          headerShown: false,
           title: "Təqvim",
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons name={focused ? "calendar" : "calendar-outline"} size={size} color={color} />
@@ -124,18 +121,20 @@ function MainTabs() {
         component={LibraryScreen}
         options={{
           title: "Kitabxana",
+          headerShown: true,
+          ...stackScreenOptions(t),
           tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons name={focused ? "book" : "book-outline"} size={size} color={color} />
+            <Ionicons name={focused ? "library" : "library-outline"} size={size} color={color} />
           ),
         }}
       />
       <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
+        component={ProfileStack}
         options={{
           title: "Profil",
           tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons name={focused ? "person-circle" : "person-circle-outline"} size={size} color={color} />
+            <Ionicons name={focused ? "person" : "person-outline"} size={size} color={color} />
           ),
         }}
       />
@@ -144,7 +143,6 @@ function MainTabs() {
           name="Admin"
           component={AdminStack}
           options={{
-            headerShown: false,
             title: "Admin",
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons name={focused ? "shield-checkmark" : "shield-checkmark-outline"} size={size} color={color} />
@@ -158,8 +156,8 @@ function MainTabs() {
 
 function AuthStack() {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
-      <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Login" component={LoginScreen} />
     </Stack.Navigator>
   );
 }
@@ -176,7 +174,6 @@ export default function RootNavigator() {
     );
   }
 
-  // Kilid ekranı hər şeyin üstündədir (root gate).
   if (locked) return <PinScreen mode="unlock" />;
   if (user && needsPinSetup) return <PinScreen mode="setup" />;
 

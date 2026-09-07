@@ -23,15 +23,18 @@ import { useTheme } from "../theme";
 const PIN_LENGTH = 6;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "bio", "0", "del"];
 
-export default function PinScreen({ mode = "unlock" }) {
+export default function PinScreen({ mode = "unlock", onDone }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
-  const { user, unlock, completePinSetup, logout } = useAuth();
+  const { user, unlock, completePinSetup, changePin, logout } = useAuth();
 
-  // setup: "create" -> "confirm" -> "biometric"; unlock: "enter"
-  const [stage, setStage] = useState(mode === "setup" ? "create" : "enter");
+  // setup: create->confirm->biometric; unlock: enter; change: verify->create->confirm
+  const [stage, setStage] = useState(
+    mode === "setup" ? "create" : mode === "change" ? "verify" : "enter"
+  );
   const [digits, setDigits] = useState("");
   const [firstPin, setFirstPin] = useState("");
+  const [currentPin, setCurrentPin] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [lockedUntil, setLockedUntil] = useState(0);
@@ -93,19 +96,72 @@ export default function PinScreen({ mode = "unlock" }) {
       if (stage === "confirm") return "PIN-i təkrarlayın";
       return `${bioLabel} ilə də açılsın?`;
     }
+    if (mode === "change") {
+      if (stage === "verify") return "Cari PIN-i daxil edin";
+      if (stage === "create") return "Yeni PIN";
+      return "Yeni PIN-i təkrarlayın";
+    }
     const name = user?.first_name || user?.username;
     return name ? `Xoş gördük, ${name}` : "Xoş gördük";
   }, [mode, stage, bioLabel, user]);
 
   const subtitle = useMemo(() => {
     if (error) return error;
-    if (mode === "setup" && stage === "create") return "Tətbiqə hər girişdə bu PIN soruşulacaq";
-    if (mode === "setup" && stage === "confirm") return "Eyni 6 rəqəmi bir daha daxil edin";
+    if (stage === "create") return "Tətbiqə hər girişdə bu PIN soruşulacaq";
+    if (stage === "confirm") return "Eyni 6 rəqəmi bir daha daxil edin";
     if (isLocked) return `Çox səhv cəhd · ${remainingLock}s gözləyin`;
     return "PIN daxil edin";
-  }, [error, mode, stage, isLocked, remainingLock]);
+  }, [error, stage, isLocked, remainingLock]);
 
   async function onComplete(pin) {
+    if (mode === "change") {
+      if (stage === "verify") {
+        setBusy(true);
+        try {
+          const res = await unlockWithPin(pin);
+          if (res.ok) {
+            setCurrentPin(pin);
+            setDigits("");
+            setStage("create");
+            setError("");
+          } else {
+            setDigits("");
+            setError(res.reason === "wiped" ? "PIN sıfırlandı" : "PIN səhvdir");
+            doShake();
+            if (res.reason === "wiped") await logout();
+          }
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      if (stage === "create") {
+        setFirstPin(pin);
+        setDigits("");
+        setStage("confirm");
+        return;
+      }
+      // confirm
+      if (pin !== firstPin) {
+        setError("PIN-lər uyğun gəlmədi");
+        doShake();
+        setDigits("");
+        setStage("create");
+        setFirstPin("");
+        return;
+      }
+      setBusy(true);
+      const ok = await changePin(currentPin, pin);
+      setBusy(false);
+      if (ok) onDone?.();
+      else {
+        setError("PIN dəyişdirilə bilmədi");
+        doShake();
+        setDigits("");
+      }
+      return;
+    }
+
     if (mode === "setup") {
       if (stage === "create") {
         setFirstPin(pin);

@@ -1,112 +1,133 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
-import { FlatList, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import * as Haptics from "expo-haptics";
+import {
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { fetchConversation, fetchMessages, markConversationRead, sendEncryptedMessage, sendGroupMessage } from "../api/chat";
+import DateSeparator from "../components/DateSeparator";
+import MessageBubble from "../components/MessageBubble";
+import {
+  fetchConversation,
+  fetchMessages,
+  markConversationRead,
+  sendEncryptedMessage,
+  sendGroupMessage,
+} from "../api/chat";
 import { useAuth } from "../context/AuthContext";
 import { decryptFromSender, encryptForRecipient, getOrCreateIdentityKeyPair } from "../crypto";
+import { dateSeparatorLabel, dayKey, messageTime } from "../lib/format";
+import { useTheme } from "../theme";
 
-function formatTime(iso) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("az-AZ", { hour: "2-digit", minute: "2-digit" });
-}
+const GROUP_GAP_MS = 3 * 60 * 1000;
 
-// For a direct (1:1) conversation, both sending and decrypting always use the
-// same counterparty key: the OTHER participant's public key. Curve25519's
-// Diffie-Hellman shared secret is symmetric — DH(mySecret, theirPublic) ==
-// DH(theirSecret, myPublic) — so this same key pairing decrypts messages
-// regardless of who sent them.
-function decryptDirectMessage(message, otherPublicKey, mySecretKey) {
+function decryptDirect(message, otherPublicKey, mySecretKey) {
   if (!message.ciphertext) return message.text || "";
   if (!otherPublicKey) return null;
   return decryptFromSender(message.ciphertext, message.nonce, otherPublicKey, mySecretKey);
 }
 
+// Mesajları tarix ayırıcıları + qruplaşma məlumatı ilə düz siyahıya çevirir.
+function buildItems(messages, meId) {
+  const out = [];
+  let lastDay = null;
+  messages.forEach((m, i) => {
+    const k = dayKey(m.created_at);
+    if (k !== lastDay) {
+      out.push({ type: "date", id: `d-${k}`, label: dateSeparatorLabel(m.created_at) });
+      lastDay = k;
+    }
+    const prev = messages[i - 1];
+    const next = messages[i + 1];
+    const sameAsPrev =
+      prev &&
+      prev.sender.id === m.sender.id &&
+      dayKey(prev.created_at) === k &&
+      new Date(m.created_at) - new Date(prev.created_at) < GROUP_GAP_MS;
+    const sameAsNext =
+      next &&
+      next.sender.id === m.sender.id &&
+      dayKey(next.created_at) === k &&
+      new Date(next.created_at) - new Date(m.created_at) < GROUP_GAP_MS;
+    let grouped = "single";
+    if (sameAsPrev && sameAsNext) grouped = "middle";
+    else if (sameAsPrev) grouped = "last";
+    else if (sameAsNext) grouped = "first";
+    out.push({ type: "msg", id: `m-${m.id}`, message: m, grouped, showSender: !sameAsPrev });
+  });
+  return out;
+}
+
 export default function ChatScreen({ route, navigation }) {
   const { conversationId, title, isGroup } = route.params;
+  const t = useTheme();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
+
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [copiedId, setCopiedId] = useState(null);
   const [otherPublicKey, setOtherPublicKey] = useState(null);
   const [mySecretKey, setMySecretKey] = useState(null);
+  const [presence, setPresence] = useState("");
+  const [copiedId, setCopiedId] = useState(null);
   const listRef = useRef(null);
 
   useEffect(() => {
-    navigation.setOptions({
-      title,
-      headerRight: isGroup
-        ? () => (
-            <Pressable onPress={() => navigation.navigate("GroupInfo", { conversationId })} hitSlop={10}>
-              <Ionicons name="information-circle-outline" size={24} color="#d4af37" />
-            </Pressable>
-          )
-        : undefined,
-    });
-  }, [title, isGroup]);
-
-  useEffect(() => {
-    const showEvent = Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow";
-    const hideEvent = Platform.OS === "android" ? "keyboardDidHide" : "keyboardWillHide";
-
-    const showSub = Keyboard.addListener(showEvent, (e) => {
-      setKeyboardHeight(e.endCoordinates?.height ?? 0);
-    });
-    const hideSub = Keyboard.addListener(hideEvent, () => {
-      setKeyboardHeight(0);
-    });
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    let isActive = true;
-
-    async function setupKeys() {
+    let active = true;
+    (async () => {
       const { secretKey } = await getOrCreateIdentityKeyPair();
-      if (!isActive) return;
+      if (!active) return;
       setMySecretKey(secretKey);
-
-      if (!isGroup) {
-        const { data } = await fetchConversation(conversationId);
+      const { data } = await fetchConversation(conversationId);
+      if (!active) return;
+      if (isGroup) {
+        setPresence(`${data.participants.length} üzv`);
+      } else {
         const other = data.participants.find((p) => p.id !== user.id);
-        if (isActive) setOtherPublicKey(other?.public_key || "");
+        setOtherPublicKey(other?.public_key || "");
+        setPresence("uçdan-uca şifrəli");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [conversationId, isGroup, user.id]);
+
+  useEffect(() => {
+    let active = true;
+    async function poll() {
+      try {
+        const { data } = await fetchMessages(conversationId);
+        if (active) setMessages(data);
+        markConversationRead(conversationId).catch(() => {});
+      } catch {
+        /* offline */
       }
     }
-
-    setupKeys();
-    return () => {
-      isActive = false;
-    };
-  }, [conversationId, isGroup]);
-
-  useEffect(() => {
-    let isActive = true;
-
-    async function poll() {
-      const { data } = await fetchMessages(conversationId);
-      if (isActive) setMessages(data);
-      // The chat is open and on screen, so any new messages fetched here are
-      // immediately "read" — clear the unread badge on the chat list for it.
-      markConversationRead(conversationId).catch(() => {});
-    }
-
     poll();
-    const interval = setInterval(poll, 3000);
+    const id = setInterval(poll, 3000);
     return () => {
-      isActive = false;
-      clearInterval(interval);
+      active = false;
+      clearInterval(id);
     };
   }, [conversationId]);
+
+  const items = useMemo(() => buildItems(messages, user.id), [messages, user.id]);
 
   async function handleSend() {
     const value = text.trim();
     if (!value) return;
+    Keyboard.dismiss();
 
     if (isGroup) {
       setText("");
@@ -114,100 +135,164 @@ export default function ChatScreen({ route, navigation }) {
       setMessages((prev) => [...prev, data]);
       return;
     }
-
-    if (!otherPublicKey) {
-      return;
-    }
+    if (!otherPublicKey) return;
     setText("");
     const { ciphertext, nonce } = encryptForRecipient(value, otherPublicKey, mySecretKey);
     const { data } = await sendEncryptedMessage(conversationId, ciphertext, nonce);
     setMessages((prev) => [...prev, data]);
   }
 
-  async function handleCopy(displayText, messageId) {
-    await Clipboard.setStringAsync(displayText);
-    setCopiedId(messageId);
-    setTimeout(() => setCopiedId((prev) => (prev === messageId ? null : prev)), 1500);
+  async function handleCopy(value, id) {
+    await Clipboard.setStringAsync(value);
+    Haptics.selectionAsync().catch(() => {});
+    setCopiedId(id);
+    setTimeout(() => setCopiedId((p) => (p === id ? null : p)), 1400);
   }
 
+  const blocked = !isGroup && !otherPublicKey && mySecretKey;
+
   return (
-    <View style={[styles.container, { paddingBottom: keyboardHeight }]}>
-      {!isGroup && !otherPublicKey && mySecretKey && (
-        <View style={styles.warningBanner}>
-          <Ionicons name="lock-open-outline" size={14} color="#f85149" />
-          <Text style={styles.warningText}>Qarşı tərəf hələ təhlükəsiz açar yaratmayıb, mesajlaşma bloklanıb.</Text>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: t.color.bg }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={0}
+    >
+      {/* Header */}
+      <View style={[styles.header, { paddingTop: insets.top + 6, backgroundColor: t.color.surface, borderBottomColor: t.color.border }]}>
+        <Pressable onPress={() => navigation.goBack()} hitSlop={10} style={styles.back}>
+          <Ionicons name="chevron-back" size={26} color={t.color.accent} />
+        </Pressable>
+        <View
+          style={[
+            styles.hAvatar,
+            { backgroundColor: isGroup ? t.color.accentMuted : t.color.surfaceAlt },
+          ]}
+        >
+          {isGroup ? (
+            <Ionicons name="people" size={20} color={t.color.accent} />
+          ) : (
+            <Text style={{ fontFamily: "Archivo-SemiBold", color: t.color.textPrimary }}>
+              {(title || "?").trim()[0]?.toUpperCase()}
+            </Text>
+          )}
+        </View>
+        <Pressable
+          style={styles.hText}
+          onPress={() => isGroup && navigation.navigate("GroupInfo", { conversationId })}
+        >
+          <Text numberOfLines={1} style={[t.typography.title, { fontSize: 16, color: t.color.textPrimary }]}>
+            {title}
+          </Text>
+          <Text numberOfLines={1} style={[t.typography.caption, { color: t.color.textSecondary }]}>
+            {presence}
+          </Text>
+        </Pressable>
+        {isGroup ? (
+          <Pressable onPress={() => navigation.navigate("GroupInfo", { conversationId })} hitSlop={10}>
+            <Ionicons name="information-circle-outline" size={24} color={t.color.accent} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {blocked ? (
+        <View style={[styles.banner, { backgroundColor: t.color.accentMuted }]}>
+          <Ionicons name="lock-open-outline" size={14} color={t.color.danger} />
+          <Text style={[t.typography.caption, { color: t.color.danger, flex: 1 }]}>
+            Qarşı tərəf hələ təhlükəsiz açar yaratmayıb — mesajlaşma bloklanıb.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.e2eePill}>
+          <View style={[styles.pill, { backgroundColor: t.color.accentMuted }]}>
+            <Ionicons name="lock-closed" size={12} color={t.color.accent} />
+            <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>
+              {isGroup ? "Qrup mesajları hələ E2EE deyil" : "Mesajlar uçdan-uca şifrələnir"}
+            </Text>
+          </View>
         </View>
       )}
+
       <FlatList
         ref={listRef}
-        data={messages}
-        keyExtractor={(item) => String(item.id)}
+        data={items}
+        keyExtractor={(it) => it.id}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 8 }}
         renderItem={({ item }) => {
-          const isMine = item.sender.id === user.id;
-          const displayText = isGroup ? item.text : decryptDirectMessage(item, otherPublicKey, mySecretKey);
-          const isUndecryptable = !isGroup && displayText === null;
+          if (item.type === "date") return <DateSeparator label={item.label} />;
+          const m = item.message;
+          const mine = m.sender.id === user.id;
+          const body = isGroup ? m.text : decryptDirect(m, otherPublicKey, mySecretKey);
+          const undecryptable = !isGroup && body === null;
           return (
-            <Pressable
-              onLongPress={() => !isUndecryptable && handleCopy(displayText, item.id)}
-              style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
-            >
-              {!isMine && <Text style={styles.sender}>{item.sender.username}</Text>}
-              <Text style={isMine ? styles.bubbleTextMine : styles.bubbleTextTheirs}>
-                {isUndecryptable ? "🔒 Mesaj deşifrə edilə bilmədi" : displayText}
-              </Text>
-              <Text style={isMine ? styles.timeMine : styles.timeTheirs}>
-                {copiedId === item.id ? "Kopyalandı ✓" : formatTime(item.created_at)}
-              </Text>
-            </Pressable>
+            <MessageBubble
+              text={copiedId === m.id ? "Kopyalandı ✓" : body}
+              mine={mine}
+              senderName={m.sender.first_name || m.sender.username}
+              showSender={isGroup && item.showSender}
+              grouped={item.grouped}
+              time={messageTime(m.created_at)}
+              status={mine ? "sent" : undefined}
+              undecryptable={undecryptable}
+              onLongPress={() => !undecryptable && handleCopy(body, m.id)}
+            />
           );
         }}
-        contentContainerStyle={{ padding: 12 }}
       />
-      <View style={styles.inputRow}>
+
+      <View style={[styles.inputRow, { backgroundColor: t.color.surface, borderTopColor: t.color.border, paddingBottom: insets.bottom || 8 }]}>
+        <Pressable hitSlop={8} style={styles.plus}>
+          <Ionicons name="add" size={24} color={t.color.textSecondary} />
+        </Pressable>
         <TextInput
-          style={styles.input}
-          placeholder="Mesaj yazın..."
-          placeholderTextColor="#8b949e"
+          style={[
+            t.typography.body,
+            styles.input,
+            { backgroundColor: t.color.surfaceAlt, color: t.color.textPrimary, borderRadius: t.radius.lg },
+          ]}
+          placeholder="Mesaj yazın"
+          placeholderTextColor={t.color.textSecondary}
           value={text}
           onChangeText={setText}
+          multiline
+          editable={!blocked}
         />
-        <Pressable style={styles.sendButton} onPress={handleSend}>
-          <Text style={styles.sendButtonText}>Göndər</Text>
+        <Pressable
+          onPress={handleSend}
+          style={[styles.send, { backgroundColor: t.color.accent }]}
+          hitSlop={6}
+        >
+          <Ionicons name={text.trim() ? "send" : "mic"} size={18} color={t.color.textOnAccent} />
         </Pressable>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0d1117" },
-  warningBanner: {
+  header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    backgroundColor: "#2d1214",
-    padding: 10,
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  warningText: { color: "#f85149", fontSize: 12, flex: 1 },
-  bubble: { maxWidth: "80%", borderRadius: 10, padding: 10, marginBottom: 8 },
-  bubbleMine: { backgroundColor: "#d4af37", alignSelf: "flex-end" },
-  bubbleTheirs: { backgroundColor: "#161b22", alignSelf: "flex-start" },
-  sender: { fontSize: 11, color: "#8b949e", marginBottom: 2 },
-  bubbleTextMine: { color: "#0d1117" },
-  bubbleTextTheirs: { color: "#fff" },
-  timeMine: { color: "#0d1117", opacity: 0.6, fontSize: 10, marginTop: 4, alignSelf: "flex-end" },
-  timeTheirs: { color: "#8b949e", fontSize: 10, marginTop: 4, alignSelf: "flex-end" },
-  inputRow: { flexDirection: "row", padding: 8, borderTopWidth: 1, borderTopColor: "#30363d" },
-  input: {
-    flex: 1,
-    backgroundColor: "#161b22",
-    color: "#fff",
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginRight: 8,
+  back: { padding: 2 },
+  hAvatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  hText: { flex: 1 },
+  banner: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8 },
+  e2eePill: { alignItems: "center", paddingVertical: 8 },
+  pill: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  sendButton: { backgroundColor: "#d4af37", borderRadius: 20, paddingHorizontal: 16, justifyContent: "center" },
-  sendButtonText: { color: "#0d1117", fontWeight: "700" },
+  plus: { height: 40, justifyContent: "center" },
+  input: { flex: 1, maxHeight: 120, paddingHorizontal: 14, paddingVertical: 9 },
+  send: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
 });

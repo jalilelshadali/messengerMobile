@@ -1,46 +1,80 @@
 import { useCallback, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { FlatList, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Linking, StyleSheet, Text, View } from "react-native";
 
+import Button from "../components/Button";
+import Card from "../components/Card";
+import EmptyState from "../components/EmptyState";
+import SearchBar from "../components/SearchBar";
 import { fetchDocuments } from "../api/library";
+import { useTheme } from "../theme";
 
 export default function LibraryScreen() {
+  const t = useTheme();
   const [documents, setDocuments] = useState([]);
+  const [search, setSearch] = useState("");
 
   useFocusEffect(
     useCallback(() => {
-      let isActive = true;
-      fetchDocuments().then(({ data }) => {
-        if (isActive) setDocuments(data);
-      });
+      let active = true;
+      fetchDocuments()
+        .then(({ data }) => active && setDocuments(data))
+        .catch(() => {});
       return () => {
-        isActive = false;
+        active = false;
       };
     }, [])
   );
 
+  const rows = documents.filter(
+    (d) => !search || d.title.toLowerCase().includes(search.toLowerCase())
+  );
+
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: t.color.bg }}>
+      <View style={styles.top}>
+        <SearchBar value={search} onChangeText={setSearch} placeholder="Sənəd axtar" />
+      </View>
       <FlatList
-        data={documents}
-        keyExtractor={(item) => String(item.id)}
+        data={rows}
+        keyExtractor={(d) => String(d.id)}
+        contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1 }}
         renderItem={({ item }) => (
-          <Pressable style={styles.row} onPress={() => Linking.openURL(item.file)}>
-            <Text style={styles.rowTitle}>{item.title}</Text>
-            <Text style={styles.rowMeta}>Minimum dərəcə: {item.min_degree}</Text>
-          </Pressable>
+          <Card style={styles.card}>
+            <View style={[styles.fileIcon, { backgroundColor: t.color.accentMuted }]}>
+              <Ionicons name="document-text" size={22} color={t.color.accent} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[t.typography.bodySm, { fontSize: 15, color: t.color.textPrimary }]} numberOfLines={2}>
+                {item.title}
+              </Text>
+              <Text style={[t.typography.caption, { color: t.color.textSecondary, marginTop: 2 }]}>
+                Minimum dərəcə: {item.min_degree}
+              </Text>
+              <Button
+                title="Aç"
+                variant="secondary"
+                onPress={() => Linking.openURL(item.file)}
+                style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 20, minHeight: 36 }}
+              />
+            </View>
+          </Card>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Dərəcənizə uyğun sənəd yoxdur</Text>}
-        contentContainerStyle={{ padding: 12 }}
+        ListEmptyComponent={
+          <EmptyState
+            icon="library-outline"
+            title={search ? "Sənəd tapılmadı" : "Sənəd yoxdur"}
+            hint={search ? "Başqa açar söz yazın" : "Dərəcənizə uyğun sənəd hələ yoxdur"}
+          />
+        }
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#0d1117" },
-  row: { padding: 14, backgroundColor: "#161b22", borderRadius: 8, marginBottom: 10 },
-  rowTitle: { color: "#fff", fontWeight: "600", fontSize: 15 },
-  rowMeta: { color: "#8b949e", marginTop: 4, fontSize: 12 },
-  empty: { color: "#8b949e", textAlign: "center", marginTop: 40 },
+  top: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  card: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  fileIcon: { width: 42, height: 52, borderRadius: 8, alignItems: "center", justifyContent: "center" },
 });

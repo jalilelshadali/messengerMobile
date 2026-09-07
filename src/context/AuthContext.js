@@ -4,10 +4,13 @@ import { fetchMe, login as loginRequest, refreshAccessToken, setPublicKey } from
 import { setAccessToken, setRefreshHandler } from "../api/client";
 import { getOrCreateIdentityKeyPair } from "../crypto";
 import {
+  disableBiometric,
   enableBiometric,
+  getMeta,
   isPinSet,
   rotateStoredRefresh,
   setupPin,
+  unlockWithPin,
   wipeLock,
 } from "../lib/secureLock";
 import { registerForPushNotifications } from "../notifications";
@@ -127,6 +130,27 @@ export function AuthProvider({ children }) {
     if (pinRef.current) await rotateStoredRefresh(pinRef.current, newRefresh);
   }
 
+  // Parametrlər → Təhlükəsizlik: PIN-i dəyiş (cari PIN yoxlanılır).
+  async function changePin(currentPin, newPin) {
+    const res = await unlockWithPin(currentPin);
+    if (!res.ok) return false;
+    const meta = await getMeta();
+    await setupPin(newPin, res.refreshToken);
+    if (meta.biometricEnabled) await enableBiometric(res.refreshToken);
+    pinRef.current = newPin;
+    return true;
+  }
+
+  // Parametrlər → Təhlükəsizlik: biometrikanı aç/bağla.
+  async function setBiometricEnabled(enabled) {
+    if (enabled) {
+      if (!refreshRef.current) return false;
+      return enableBiometric(refreshRef.current);
+    }
+    await disableBiometric();
+    return true;
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -140,6 +164,8 @@ export function AuthProvider({ children }) {
         lockNow,
         completePinSetup,
         persistRotatedRefresh,
+        setBiometricEnabled,
+        changePin,
       }}
     >
       {children}
