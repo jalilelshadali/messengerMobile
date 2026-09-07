@@ -27,6 +27,7 @@ import {
 import { useAuth } from "../context/AuthContext";
 import { decryptFromSender, encryptForRecipient, getOrCreateIdentityKeyPair } from "../crypto";
 import { dateSeparatorLabel, dayKey, messageTime } from "../lib/format";
+import { rememberMessages } from "../lib/messageStore";
 import { useTheme } from "../theme";
 
 const GROUP_GAP_MS = 3 * 60 * 1000;
@@ -123,6 +124,26 @@ export default function ChatScreen({ route, navigation }) {
   }, [conversationId]);
 
   const items = useMemo(() => buildItems(messages, user.id), [messages, user.id]);
+
+  // Söhbət lentini axtarış üçün lokal indeksə yaz (deşifrə edilmiş mətnlə).
+  useEffect(() => {
+    if (!messages.length) return;
+    if (!isGroup && !mySecretKey) return;
+    const decoded = messages
+      .map((m) => {
+        const body = isGroup ? m.text : decryptDirect(m, otherPublicKey, mySecretKey);
+        if (!body) return null;
+        return {
+          id: m.id,
+          text: body,
+          from: m.sender.first_name || m.sender.username,
+          at: m.created_at,
+          mine: m.sender.id === user.id,
+        };
+      })
+      .filter(Boolean);
+    rememberMessages(conversationId, { name: title, isGroup }, decoded);
+  }, [messages, isGroup, otherPublicKey, mySecretKey, conversationId, title, user.id]);
 
   async function handleSend() {
     const value = text.trim();

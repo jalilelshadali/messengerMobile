@@ -14,7 +14,8 @@ import SectionHeader from "../components/SectionHeader";
 import { fetchConversations } from "../api/chat";
 import { useAuth } from "../context/AuthContext";
 import { decryptFromSender, getOrCreateIdentityKeyPair } from "../crypto";
-import { chatListTime } from "../lib/format";
+import { chatListTime, messageTime } from "../lib/format";
+import { searchMessages } from "../lib/messageStore";
 import { useTheme } from "../theme";
 
 const PINNED_KEY = "chat.pinnedIds";
@@ -47,6 +48,7 @@ export default function ChatListScreen({ navigation }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all"); // all | unread | groups
   const [pinnedIds, setPinnedIds] = useState([]);
+  const [messageHits, setMessageHits] = useState([]);
 
   useEffect(() => {
     getOrCreateIdentityKeyPair().then(({ secretKey }) => setMySecretKey(secretKey));
@@ -79,6 +81,18 @@ export default function ChatListScreen({ navigation }) {
     }, [])
   );
 
+  // Söhbət mətnlərində axtarış (lokal indeksdən).
+  useEffect(() => {
+    if (search.trim().length < 2) {
+      setMessageHits([]);
+      return undefined;
+    }
+    const id = setTimeout(() => {
+      searchMessages(search).then(setMessageHits).catch(() => setMessageHits([]));
+    }, 200);
+    return () => clearTimeout(id);
+  }, [search]);
+
   function togglePin(convId) {
     setPinnedIds((prev) => {
       const next = prev.includes(convId) ? prev.filter((x) => x !== convId) : [...prev, convId];
@@ -107,6 +121,44 @@ export default function ChatListScreen({ navigation }) {
 
   const pinned = rows.filter((r) => r.pinned);
   const rest = rows.filter((r) => !r.pinned);
+
+  function renderMessageHit(hit) {
+    const { message: m } = hit;
+    const lower = m.text.toLowerCase();
+    const at = lower.indexOf(search.trim().toLowerCase());
+    const before = at > 0 ? `…${m.text.slice(Math.max(0, at - 20), at)}` : m.text.slice(0, at);
+    const match = m.text.slice(at, at + search.trim().length);
+    const after = m.text.slice(at + search.trim().length);
+
+    return (
+      <Pressable
+        key={`${hit.conversationId}-${m.id}`}
+        onPress={() =>
+          navigation.navigate("Chat", {
+            conversationId: hit.conversationId,
+            title: hit.name,
+            isGroup: hit.isGroup,
+          })
+        }
+        style={({ pressed }) => [
+          styles.hitRow,
+          { backgroundColor: pressed ? t.color.surfaceAlt : t.color.surface },
+        ]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text numberOfLines={1} style={[t.typography.bodySm, { fontSize: 15, color: t.color.textPrimary }]}>
+            {hit.name || "Söhbət"}
+          </Text>
+          <Text numberOfLines={1} style={[t.typography.caption, { color: t.color.textSecondary, marginTop: 2 }]}>
+            {before}
+            <Text style={{ color: t.color.accent, fontFamily: "Archivo-SemiBold" }}>{match}</Text>
+            {after}
+          </Text>
+        </View>
+        <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>{messageTime(m.at)}</Text>
+      </Pressable>
+    );
+  }
 
   function renderRow(r) {
     return (
@@ -175,16 +227,33 @@ export default function ChatListScreen({ navigation }) {
             </View>
           ) : null
         }
-        ListEmptyComponent={
-          <EmptyState
-            icon="chatbubbles-outline"
-            title={search || filter !== "all" ? "Uyğun söhbət yoxdur" : "Hələ söhbət yoxdur"}
-            hint={search || filter !== "all" ? "Filtri dəyişin" : '"Yeni" düyməsi ilə başlayın'}
-            actionLabel={search || filter !== "all" ? null : "Yeni söhbət"}
-            onAction={() => navigation.navigate("NewChat")}
-          />
+        ListFooterComponent={
+          search.trim().length >= 2 && messageHits.length ? (
+            <View>
+              <SectionHeader title={`Mesajlar (${messageHits.length})`} />
+              {messageHits.map(renderMessageHit)}
+              <View style={{ height: 24 }} />
+            </View>
+          ) : null
         }
-        contentContainerStyle={rest.length ? null : { flexGrow: 1 }}
+        ListEmptyComponent={
+          search.trim().length >= 2 && messageHits.length ? null : (
+            <EmptyState
+              icon="chatbubbles-outline"
+              title={search || filter !== "all" ? "Uyğun söhbət yoxdur" : "Hələ söhbət yoxdur"}
+              hint={
+                search
+                  ? "Söhbət adı tapılmadı — mesaj mətni aşağıda ola bilər"
+                  : filter !== "all"
+                    ? "Filtri dəyişin"
+                    : '"Yeni" düyməsi ilə başlayın'
+              }
+              actionLabel={search || filter !== "all" ? null : "Yeni söhbət"}
+              onAction={() => navigation.navigate("NewChat")}
+            />
+          )
+        }
+        contentContainerStyle={rest.length || messageHits.length ? null : { flexGrow: 1 }}
       />
     </View>
   );
@@ -205,4 +274,11 @@ const styles = StyleSheet.create({
   controls: { paddingHorizontal: 16, paddingBottom: 8, gap: 10 },
   chips: { flexDirection: "row", gap: 8 },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 76 },
+  hitRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
 });
