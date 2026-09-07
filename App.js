@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
-import { AppState, Platform, View } from "react-native";
+import { AppState, View } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { StatusBar } from "expo-status-bar";
-import { preventScreenCaptureAsync } from "expo-screen-capture";
 import { useFonts } from "expo-font";
 import {
   Archivo_400Regular,
@@ -69,11 +68,11 @@ export default function App() {
     "Archivo-Bold": Archivo_700Bold,
   });
 
-  useEffect(() => {
-    if (Platform.OS !== "web") {
-      preventScreenCaptureAsync().catch(() => {});
-    }
-  }, []);
+  // NOTE: global screen-capture prevention (FLAG_SECURE) was here. Removed
+  // while debugging an Android issue where the soft keyboard opens then
+  // instantly closes — some IMEs (Samsung Keyboard especially) refuse to
+  // attach to a FLAG_SECURE window. If this is the cause, re-add protection
+  // scoped to ChatScreen only via `usePreventScreenCapture()`.
 
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>
