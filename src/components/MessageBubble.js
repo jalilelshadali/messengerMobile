@@ -27,6 +27,7 @@ export default function MessageBubble({
   grouped = "single",
   undecryptable = false,
   onLongPress,
+  onPress,
 }) {
   const t = useTheme();
 
@@ -51,6 +52,7 @@ export default function MessageBubble({
   return (
     <Pressable
       onLongPress={onLongPress}
+      onPress={onPress}
       style={[
         styles.bubble,
         corners,

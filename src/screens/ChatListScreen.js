@@ -15,7 +15,7 @@ import { fetchConversations } from "../api/chat";
 import { useAuth } from "../context/AuthContext";
 import { decryptFromSender, getOrCreateIdentityKeyPair } from "../crypto";
 import { chatListTime, messageTime } from "../lib/format";
-import { searchMessages } from "../lib/messageStore";
+import { rememberMessages, searchMessages } from "../lib/messageStore";
 import { useTheme } from "../theme";
 
 const PINNED_KEY = "chat.pinnedIds";
@@ -80,6 +80,31 @@ export default function ChatListScreen({ navigation }) {
       };
     }, [])
   );
+
+  // Hər söhbətin son mesajını axtarış indeksinə yaz (açılmamış söhbətlər üçün də).
+  useEffect(() => {
+    if (!conversations.length) return;
+    for (const c of conversations) {
+      const last = c.last_message;
+      if (!last) continue;
+      let body;
+      if (c.is_group) body = last.text;
+      else if (!last.ciphertext) body = last.text;
+      else {
+        const other = c.participants.find((p) => p.id !== user.id);
+        body =
+          other?.public_key && mySecretKey
+            ? decryptFromSender(last.ciphertext, last.nonce, other.public_key, mySecretKey)
+            : null;
+      }
+      if (!body) continue;
+      rememberMessages(
+        c.id,
+        { name: conversationTitle(c, user.id), isGroup: c.is_group },
+        [{ id: last.id ?? `last-${c.id}`, text: body, from: "", at: last.created_at, mine: false }]
+      );
+    }
+  }, [conversations, mySecretKey, user.id]);
 
   // Söhbət mətnlərində axtarış (lokal indeksdən).
   useEffect(() => {

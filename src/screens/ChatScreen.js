@@ -4,9 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import {
   FlatList,
-  Keyboard,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -109,7 +107,13 @@ export default function ChatScreen({ route, navigation }) {
     async function poll() {
       try {
         const { data } = await fetchMessages(conversationId);
-        if (active) setMessages(data);
+        if (!active) return;
+        // Serverdən gələn siyahı hər şeyi əvəz edir, amma hələ çatmamış
+        // (optimistik) mesajları saxla.
+        setMessages((prev) => {
+          const localOnly = prev.filter((m) => m._pending || m._failed);
+          return [...data, ...localOnly];
+        });
         markConversationRead(conversationId).catch(() => {});
       } catch {
         /* offline */
@@ -123,7 +127,17 @@ export default function ChatScreen({ route, navigation }) {
     };
   }, [conversationId]);
 
-  const items = useMemo(() => buildItems(messages, user.id), [messages, user.id]);
+  const items = useMemo(() => {
+    // Optimistik göndərmə + polling üst-üstə düşəndə eyni mesaj iki dəfə
+    // ola bilər — id-yə görə təkrarları at.
+    const seen = new Set();
+    const deduped = messages.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+    return buildItems(deduped, user.id);
+  }, [messages, user.id]);
 
   // Söhbət lentini axtarış üçün lokal indeksə yaz (deşifrə edilmiş mətnlə).
   useEffect(() => {
@@ -147,20 +161,50 @@ export default function ChatScreen({ route, navigation }) {
 
   async function handleSend() {
     const value = text.trim();
-    if (!value) return;
-    Keyboard.dismiss();
-
-    if (isGroup) {
-      setText("");
-      const { data } = await sendGroupMessage(conversationId, value);
-      setMessages((prev) => [...prev, data]);
-      return;
-    }
-    if (!otherPublicKey) return;
+    if (!value || blocked) return;
     setText("");
-    const { ciphertext, nonce } = encryptForRecipient(value, otherPublicKey, mySecretKey);
-    const { data } = await sendEncryptedMessage(conversationId, ciphertext, nonce);
-    setMessages((prev) => [...prev, data]);
+
+    // Optimistik: mesaj dərhal lentdə görünür ("gedir" statusu ilə),
+    // server cavabı gələndə əsl mesajla əvəz olunur.
+    const tmpId = `tmp-${Date.now()}`;
+    const optimistic = {
+      id: tmpId,
+      sender: {
+        id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        username: user.username,
+      },
+      text: value,
+      ciphertext: "",
+      nonce: "",
+      created_at: new Date().toISOString(),
+      _pending: true,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+
+    try {
+      let data;
+      if (isGroup) {
+        ({ data } = await sendGroupMessage(conversationId, value));
+      } else {
+        const { ciphertext, nonce } = encryptForRecipient(value, otherPublicKey, mySecretKey);
+        ({ data } = await sendEncryptedMessage(conversationId, ciphertext, nonce));
+      }
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === data.id)) return prev.filter((m) => m.id !== tmpId);
+        return prev.map((m) => (m.id === tmpId ? data : m));
+      });
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tmpId ? { ...m, _pending: false, _failed: true } : m))
+      );
+    }
+  }
+
+  function retrySend(failed) {
+    setMessages((prev) => prev.filter((m) => m.id !== failed.id));
+    setText(failed.text);
   }
 
   async function handleCopy(value, id) {
@@ -175,7 +219,7 @@ export default function ChatScreen({ route, navigation }) {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: t.color.bg }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior="padding"
       keyboardVerticalOffset={0}
     >
       {/* Header */}
@@ -243,8 +287,15 @@ export default function ChatScreen({ route, navigation }) {
           if (item.type === "date") return <DateSeparator label={item.label} />;
           const m = item.message;
           const mine = m.sender.id === user.id;
-          const body = isGroup ? m.text : decryptDirect(m, otherPublicKey, mySecretKey);
-          const undecryptable = !isGroup && body === null;
+          const body = isGroup || !m.ciphertext ? m.text : decryptDirect(m, otherPublicKey, mySecretKey);
+          const undecryptable = !isGroup && m.ciphertext && body === null;
+          const status = !mine
+            ? undefined
+            : m._failed
+              ? "failed"
+              : m._pending
+                ? "sending"
+                : "sent";
           return (
             <MessageBubble
               text={copiedId === m.id ? "Kopyalandı ✓" : body}
@@ -252,10 +303,11 @@ export default function ChatScreen({ route, navigation }) {
               senderName={m.sender.first_name || m.sender.username}
               showSender={isGroup && item.showSender}
               grouped={item.grouped}
-              time={messageTime(m.created_at)}
-              status={mine ? "sent" : undefined}
+              time={m._failed ? "Göndərilmədi" : messageTime(m.created_at)}
+              status={status}
               undecryptable={undecryptable}
-              onLongPress={() => !undecryptable && handleCopy(body, m.id)}
+              onLongPress={() => !undecryptable && !m._pending && handleCopy(body, m.id)}
+              onPress={m._failed ? () => retrySend(m) : undefined}
             />
           );
         }}
