@@ -10,7 +10,7 @@ import {
   Archivo_600SemiBold,
   Archivo_700Bold,
 } from "@expo-google-fonts/archivo";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaProvider, initialWindowMetrics } from "react-native-safe-area-context";
 
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import { SettingsProvider, useSettings } from "./src/context/SettingsContext";
@@ -75,15 +75,15 @@ export default function App() {
     }
   }, []);
 
-  if (!fontsLoaded) {
-    return <View style={{ flex: 1, backgroundColor: "#F4F3F1" }} />;
-  }
-
   return (
-    <SafeAreaProvider>
-      <SettingsProvider>
-        <Themed />
-      </SettingsProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      {fontsLoaded ? (
+        <SettingsProvider>
+          <Themed />
+        </SettingsProvider>
+      ) : (
+        <View style={{ flex: 1, backgroundColor: "#F4F3F1" }} />
+      )}
     </SafeAreaProvider>
   );
 }

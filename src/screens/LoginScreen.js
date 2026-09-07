@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import {
-  Animated,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -17,6 +17,12 @@ import Input from "../components/Input";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
 
+// NOTE (Android keyboard): earlier versions animated the monogram's
+// width/height and toggled layout on keyboardDidShow. Any layout change while
+// the IME is animating in makes Android think the field blurred and it
+// instantly dismisses the keyboard. This screen now has ZERO keyboard
+// listeners and ZERO layout animation — a plain ScrollView that the OS
+// resizes. Do not reintroduce Keyboard.addListener / Animated layout here.
 export default function LoginScreen() {
   const t = useTheme();
   const insets = useSafeAreaInsets();
@@ -26,20 +32,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const mono = useRef(new Animated.Value(88)).current;
-
-  useEffect(() => {
-    const evShow = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const evHide = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const to = (v) => Animated.timing(mono, { toValue: v, duration: 180, useNativeDriver: false }).start();
-    const s = Keyboard.addListener(evShow, () => to(56));
-    const h = Keyboard.addListener(evHide, () => to(88));
-    return () => {
-      s.remove();
-      h.remove();
-    };
-  }, [mono]);
 
   async function handleSubmit() {
     if (!username.trim() || !password) return;
@@ -61,28 +53,39 @@ export default function LoginScreen() {
     }
   }
 
+  const Wrapper = Platform.OS === "ios" ? KeyboardAvoidingView : View;
+
   return (
-    <KeyboardAvoidingView
-      style={[styles.root, { backgroundColor: t.color.bg }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom + 16 }]}>
+    <Wrapper style={[styles.root, { backgroundColor: t.color.bg }]} behavior="padding">
+      <ScrollView
+        style={styles.root}
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
         <View style={styles.header}>
-          <Animated.View
+          <View
             style={[
               styles.mono,
-              { width: mono, height: mono, borderRadius: 999, backgroundColor: t.color.accentMuted, borderColor: t.color.accentLine },
+              { backgroundColor: t.color.accentMuted, borderColor: t.color.accentLine },
             ]}
           >
-            <Ionicons name="shield-checkmark" size={32} color={t.color.accent} />
-          </Animated.View>
+            <Ionicons name="shield-checkmark" size={30} color={t.color.accent} />
+          </View>
           <Text style={[t.typography.display, styles.title, { color: t.color.textPrimary }]}>
             Xoş gördük, qardaş
           </Text>
-          <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>Böyük Loja · Daxili Ekosistem</Text>
+          <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>
+            Böyük Loja · Daxili Ekosistem
+          </Text>
         </View>
 
-        <View style={styles.form}>
+        <View>
           <Input
             label="İstifadəçi adı"
             value={username}
@@ -109,7 +112,13 @@ export default function LoginScreen() {
           ) : null}
 
           <Pressable hitSlop={8} style={styles.forgot}>
-            <Text style={[t.typography.caption, styles.link, { color: t.color.textPrimary, borderBottomColor: t.color.accentLine }]}>
+            <Text
+              style={[
+                t.typography.caption,
+                styles.link,
+                { color: t.color.textPrimary, borderBottomColor: t.color.accentLine },
+              ]}
+            >
               Şifrəni unutdum
             </Text>
           </Pressable>
@@ -134,22 +143,29 @@ export default function LoginScreen() {
             Hesabınız yoxdursa, Böyük Katiblə əlaqə saxlayın.
           </Text>
         </View>
-      </View>
-    </KeyboardAvoidingView>
+      </ScrollView>
+    </Wrapper>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  container: { flex: 1, paddingHorizontal: 28, justifyContent: "center" },
+  content: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 28 },
   header: { alignItems: "center", marginBottom: 32 },
-  mono: { alignItems: "center", justifyContent: "center", borderWidth: 1.5, marginBottom: 20 },
+  mono: {
+    width: 80,
+    height: 80,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    marginBottom: 20,
+  },
   title: { textAlign: "center", marginBottom: 4 },
-  form: {},
   errorRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
   forgot: { alignSelf: "flex-start", marginTop: 14 },
   link: { borderBottomWidth: 2, paddingBottom: 1 },
-  footer: { position: "absolute", left: 28, right: 28, bottom: 0, alignItems: "center", gap: 6 },
+  footer: { alignItems: "center", gap: 6, marginTop: 40 },
   e2eeRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   footerHint: { textAlign: "center" },
 });

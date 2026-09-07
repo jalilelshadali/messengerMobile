@@ -1,0 +1,34 @@
+# EAS Build upload filter. Unlike .gitignore, this INTENTIONALLY does NOT
+# exclude google-services.json — that file is gitignored (secret, shared
+# out-of-band) but EAS Build needs it to configure FCM at prebuild time.
+# The upload goes straight to Expo's build service, not into git.
+
+node_modules/
+.expo/
+dist/
+dist-apk/
+web-build/
+.kotlin/
+/ios
+/android
+
+# real secrets — keep these OUT of the upload
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+.env
+.env*.local
+
+# misc
+*.orig.*
+*.zip
+*.tsbuildinfo
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+GoogleService-Info.plist

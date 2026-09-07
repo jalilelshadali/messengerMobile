@@ -1,17 +1,22 @@
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Device from "expo-device";
-import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
 import client from "./api/client";
 
-// Expo Go dropped Android push notification support in SDK 53+ — any use of
-// expo-notifications there throws a hard error, not just a warning. The real
+// Expo Go dropped Android push notification support in SDK 53+ — merely
+// IMPORTING expo-notifications there throws a hard error as a module-level
+// side effect (before any of our own code runs), so a static top-level
+// `import` is unsafe here: it would evaluate eagerly at app boot regardless
+// of any guard placed around its usage. A lazy require() behind this check
+// means the module is never touched at all under Expo Go. The real
 // standalone APK build is unaffected (executionEnvironment is "standalone"
 // there); this only matters for local Expo Go testing.
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
+let Notifications = null;
 if (!isExpoGo) {
+  Notifications = require("expo-notifications");
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowBanner: true,
@@ -23,7 +28,7 @@ if (!isExpoGo) {
 }
 
 export async function registerForPushNotifications() {
-  if (isExpoGo) return;
+  if (isExpoGo || !Notifications) return;
   if (!Device.isDevice) return;
 
   if (Platform.OS === "android") {
