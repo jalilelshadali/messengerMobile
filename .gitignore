@@ -32,6 +32,14 @@ yarn-error.*
 
 # local env files
 .env*.local
+.env
+
+# firebase client config (share out-of-band, not via git)
+google-services.json
+GoogleService-Info.plist
+
+# stray build artifacts
+*.zip
 
 # typescript
 *.tsbuildinfo
