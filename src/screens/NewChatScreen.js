@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useHeaderHeight } from "@react-navigation/elements";
+import { FlatList, KeyboardAvoidingView, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Avatar from "../components/Avatar";
@@ -20,6 +21,7 @@ function nameOf(u) {
 export default function NewChatScreen({ navigation }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const { user: me } = useAuth();
 
   const [users, setUsers] = useState([]);
@@ -68,7 +70,11 @@ export default function NewChatScreen({ navigation }) {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.color.bg }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: t.color.bg }}
+      behavior="padding"
+      keyboardVerticalOffset={headerHeight}
+    >
       <View style={styles.top}>
         <SearchBar value={search} onChangeText={setSearch} placeholder="Ad və ya @istifadəçi adı" autoFocus />
       </View>
@@ -134,7 +140,7 @@ export default function NewChatScreen({ navigation }) {
           <Button title="Qrup yarat" onPress={createGroup} loading={busy} style={{ marginTop: 10 }} />
         </View>
       ) : null}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
