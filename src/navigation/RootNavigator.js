@@ -4,6 +4,8 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { ActivityIndicator, Platform, Pressable, View } from "react-native";
 
 import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../theme";
+import PinScreen from "../screens/PinScreen";
 import AdminBooksScreen from "../screens/AdminBooksScreen";
 import AdminHomeScreen from "../screens/AdminHomeScreen";
 import AdminOrgScreen from "../screens/AdminOrgScreen";
@@ -163,15 +165,20 @@ function AuthStack() {
 }
 
 export default function RootNavigator() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, locked, needsPinSetup } = useAuth();
+  const t = useTheme();
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: "#0d1117", justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator color="#d4af37" size="large" />
+      <View style={{ flex: 1, backgroundColor: t.color.bg, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator color={t.color.accent} size="large" />
       </View>
     );
   }
+
+  // Kilid ekranı hər şeyin üstündədir (root gate).
+  if (locked) return <PinScreen mode="unlock" />;
+  if (user && needsPinSetup) return <PinScreen mode="setup" />;
 
   return user ? <MainTabs /> : <AuthStack />;
 }
