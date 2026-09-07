@@ -26,7 +26,15 @@ const K = {
   state: "lock.state", // AsyncStorage: { failedAttempts, lockedUntil }
 };
 
-const ITERATIONS = 12000;
+// Was 12000: a synchronous pure-JS SHA-512 loop that long blocks the JS
+// thread completely (no native/hardware acceleration for this, unlike a
+// real PBKDF2/Argon2 binding) — on a phone this can freeze the whole app,
+// busy spinner included, for many seconds. SecureStore (Keystore/Keychain)
+// is the real defense here (see note above); this loop is only extra
+// brute-force friction, so it doesn't need to be this expensive. Reduced
+// and chunked with yields so it can never block a single frame for long.
+const ITERATIONS = 2000;
+const YIELD_EVERY = 200;
 const BIO_SERVICE = "lojamessenger.biometric";
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_AFTER = 3;
@@ -51,14 +59,22 @@ async function secureDelete(key, opts) {
   }
 }
 
-function deriveBytes(pin, saltB64, domain) {
+const nextTick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// Chunked + yielded so a long hash loop never blocks a render frame — without
+// this, the whole app (busy spinner included) would freeze solid until it's
+// done, since it ran fully synchronously on the JS thread.
+async function deriveBytes(pin, saltB64, domain) {
   const prefix = decodeUTF8(`${domain}:${pin}:`);
   const salt = decodeBase64(saltB64);
   const seed = new Uint8Array(prefix.length + salt.length);
   seed.set(prefix);
   seed.set(salt, prefix.length);
   let out = nacl.hash(seed); // 64 bayt (SHA-512)
-  for (let i = 0; i < ITERATIONS; i += 1) out = nacl.hash(out);
+  for (let i = 0; i < ITERATIONS; i += 1) {
+    out = nacl.hash(out);
+    if (i % YIELD_EVERY === 0) await nextTick();
+  }
   return out;
 }
 
@@ -133,8 +149,8 @@ export async function getBiometricLabel() {
 export async function setupPin(pin, refreshToken) {
   const saltBytes = nacl.randomBytes(16);
   const saltB64 = encodeBase64(saltBytes);
-  const verifier = encodeBase64(deriveBytes(pin, saltB64, "verify"));
-  const wrapKey = deriveBytes(pin, saltB64, "wrap").slice(0, 32);
+  const verifier = encodeBase64(await deriveBytes(pin, saltB64, "verify"));
+  const wrapKey = (await deriveBytes(pin, saltB64, "wrap")).slice(0, 32);
 
   await secureSet(K.salt, saltB64);
   await secureSet(K.verifier, verifier);
@@ -177,7 +193,7 @@ export async function unlockWithPin(pin) {
   const verifier = await secureGet(K.verifier);
   if (!saltB64 || !verifier) return { ok: false, reason: "not_set" };
 
-  const candidate = encodeBase64(deriveBytes(pin, saltB64, "verify"));
+  const candidate = encodeBase64(await deriveBytes(pin, saltB64, "verify"));
   if (candidate !== verifier) {
     const failedAttempts = state.failedAttempts + 1;
     if (failedAttempts >= MAX_ATTEMPTS) {
@@ -195,7 +211,7 @@ export async function unlockWithPin(pin) {
     };
   }
 
-  const wrapKey = deriveBytes(pin, saltB64, "wrap").slice(0, 32);
+  const wrapKey = (await deriveBytes(pin, saltB64, "wrap")).slice(0, 32);
   const refreshToken = unwrap(await secureGet(K.wrappedRefresh), wrapKey);
   if (!refreshToken) return { ok: false, reason: "corrupt" };
 
@@ -231,7 +247,7 @@ export async function unlockWithBiometric() {
 export async function rotateStoredRefresh(pin, refreshToken) {
   const saltB64 = await secureGet(K.salt);
   if (!saltB64) return;
-  const wrapKey = deriveBytes(pin, saltB64, "wrap").slice(0, 32);
+  const wrapKey = (await deriveBytes(pin, saltB64, "wrap")).slice(0, 32);
   await secureSet(K.wrappedRefresh, wrap(refreshToken, wrapKey));
   const meta = await getMeta();
   if (meta.biometricEnabled) {

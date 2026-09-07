@@ -59,6 +59,9 @@ export default function Input({
           onBlur={() => setFocused(false)}
           onSubmitEditing={onSubmitEditing}
           returnKeyType={returnKeyType}
+          textAlignVertical="center"
+          underlineColorAndroid="transparent"
+          includeFontPadding={false}
         />
         {secureTextEntry ? (
           <Pressable onPress={() => setHidden((h) => !h)} hitSlop={10} style={styles.eye}>

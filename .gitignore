@@ -47,3 +47,4 @@ GoogleService-Info.plist
 # generated native folders
 /ios
 /android
+dist-apk/

@@ -1,19 +1,29 @@
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
 import client from "./api/client";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// Expo Go dropped Android push notification support in SDK 53+ — any use of
+// expo-notifications there throws a hard error, not just a warning. The real
+// standalone APK build is unaffected (executionEnvironment is "standalone"
+// there); this only matters for local Expo Go testing.
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+if (!isExpoGo) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 export async function registerForPushNotifications() {
+  if (isExpoGo) return;
   if (!Device.isDevice) return;
 
   if (Platform.OS === "android") {
