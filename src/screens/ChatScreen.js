@@ -13,9 +13,13 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import BottomSheet from "../components/BottomSheet";
 import DateSeparator from "../components/DateSeparator";
 import MessageBubble from "../components/MessageBubble";
+import PeerProfileSheet from "../components/PeerProfileSheet";
 import {
+  deleteMessage,
+  editMessage,
   fetchConversation,
   fetchMessages,
   markConversationRead,
@@ -76,10 +80,31 @@ export default function ChatScreen({ route, navigation }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [otherPublicKey, setOtherPublicKey] = useState(null);
+  const [otherUser, setOtherUser] = useState(null);
   const [mySecretKey, setMySecretKey] = useState(null);
   const [presence, setPresence] = useState("");
   const [copiedId, setCopiedId] = useState(null);
+  const [peerOpen, setPeerOpen] = useState(false);
+  const [adminsOnly, setAdminsOnly] = useState(false);
+  const [iAmAdmin, setIAmAdmin] = useState(false);
+  const [peerLastRead, setPeerLastRead] = useState(null);
+  const [editing, setEditing] = useState(null); // redaktə olunan mesaj
+  const [actionMsg, setActionMsg] = useState(null); // uzun basılan mesaj
   const listRef = useRef(null);
+
+  function applyConversation(data) {
+    if (isGroup) {
+      setPresence(`${data.participants.length} üzv`);
+      setAdminsOnly(!!data.admins_only);
+      setIAmAdmin(!!data.is_admin);
+    } else {
+      const other = data.participants.find((p) => p.id !== user.id);
+      setOtherUser(other || null);
+      setOtherPublicKey(other?.public_key || "");
+      setPresence("uçdan-uca şifrəli");
+      setPeerLastRead(data.peer_last_read || null);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -89,21 +114,17 @@ export default function ChatScreen({ route, navigation }) {
       setMySecretKey(secretKey);
       const { data } = await fetchConversation(conversationId);
       if (!active) return;
-      if (isGroup) {
-        setPresence(`${data.participants.length} üzv`);
-      } else {
-        const other = data.participants.find((p) => p.id !== user.id);
-        setOtherPublicKey(other?.public_key || "");
-        setPresence("uçdan-uca şifrəli");
-      }
+      applyConversation(data);
     })();
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, isGroup, user.id]);
 
   useEffect(() => {
     let active = true;
+    let tick = 0;
     async function poll() {
       try {
         const { data } = await fetchMessages(conversationId);
@@ -115,6 +136,13 @@ export default function ChatScreen({ route, navigation }) {
           return [...data, ...localOnly];
         });
         markConversationRead(conversationId).catch(() => {});
+        // Söhbət metasını (oxundu, admin rejimi) hərdən yenilə.
+        tick += 1;
+        if (tick % 2 === 1) {
+          fetchConversation(conversationId)
+            .then(({ data: c }) => active && applyConversation(c))
+            .catch(() => {});
+        }
       } catch {
         /* offline */
       }
@@ -207,6 +235,47 @@ export default function ChatScreen({ route, navigation }) {
     setText(failed.text);
   }
 
+  function startEdit(m) {
+    setActionMsg(null);
+    setEditing(m);
+    setText(m._body || m.text || "");
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+    setText("");
+  }
+
+  async function handleSaveEdit() {
+    const value = text.trim();
+    const m = editing;
+    if (!m || !value) return;
+    setEditing(null);
+    setText("");
+    try {
+      let data;
+      if (isGroup || !m.ciphertext) {
+        ({ data } = await editMessage(conversationId, m.id, { text: value }));
+      } else {
+        const { ciphertext, nonce } = encryptForRecipient(value, otherPublicKey, mySecretKey);
+        ({ data } = await editMessage(conversationId, m.id, { ciphertext, nonce }));
+      }
+      setMessages((prev) => prev.map((x) => (x.id === m.id ? data : x)));
+    } catch {
+      /* redaktə alınmadı — növbəti poll köhnə mesajı qaytaracaq */
+    }
+  }
+
+  async function handleDelete(m) {
+    setActionMsg(null);
+    setMessages((prev) => prev.filter((x) => x.id !== m.id));
+    try {
+      await deleteMessage(conversationId, m.id);
+    } catch {
+      /* silmə alınmadı — poll qaytaracaq */
+    }
+  }
+
   async function handleCopy(value, id) {
     await Clipboard.setStringAsync(value);
     Haptics.selectionAsync().catch(() => {});
@@ -214,7 +283,9 @@ export default function ChatScreen({ route, navigation }) {
     setTimeout(() => setCopiedId((p) => (p === id ? null : p)), 1400);
   }
 
-  const blocked = !isGroup && !otherPublicKey && mySecretKey;
+  const keyMissing = !isGroup && !otherPublicKey && mySecretKey;
+  const adminOnlyLock = isGroup && adminsOnly && !iAmAdmin;
+  const blocked = keyMissing || adminOnlyLock;
 
   return (
     <KeyboardAvoidingView
@@ -243,7 +314,11 @@ export default function ChatScreen({ route, navigation }) {
         </View>
         <Pressable
           style={styles.hText}
-          onPress={() => isGroup && navigation.navigate("GroupInfo", { conversationId })}
+          onPress={() =>
+            isGroup
+              ? navigation.navigate("GroupInfo", { conversationId })
+              : otherUser && setPeerOpen(true)
+          }
         >
           <Text numberOfLines={1} style={[t.typography.title, { fontSize: 16, color: t.color.textPrimary }]}>
             {title}
@@ -259,11 +334,18 @@ export default function ChatScreen({ route, navigation }) {
         ) : null}
       </View>
 
-      {blocked ? (
+      {keyMissing ? (
         <View style={[styles.banner, { backgroundColor: t.color.accentMuted }]}>
           <Ionicons name="lock-open-outline" size={14} color={t.color.danger} />
           <Text style={[t.typography.caption, { color: t.color.danger, flex: 1 }]}>
             Qarşı tərəf hələ təhlükəsiz açar yaratmayıb — mesajlaşma bloklanıb.
+          </Text>
+        </View>
+      ) : adminOnlyLock ? (
+        <View style={[styles.banner, { backgroundColor: t.color.accentMuted }]}>
+          <Ionicons name="lock-closed" size={14} color={t.color.textSecondary} />
+          <Text style={[t.typography.caption, { color: t.color.textSecondary, flex: 1 }]}>
+            Bu qrupda yalnız adminlər mesaj yaza bilər.
           </Text>
         </View>
       ) : (
@@ -289,13 +371,22 @@ export default function ChatScreen({ route, navigation }) {
           const mine = m.sender.id === user.id;
           const body = isGroup || !m.ciphertext ? m.text : decryptDirect(m, otherPublicKey, mySecretKey);
           const undecryptable = !isGroup && m.ciphertext && body === null;
+          const readByPeer =
+            mine &&
+            !isGroup &&
+            peerLastRead &&
+            !m._pending &&
+            !m._failed &&
+            new Date(m.created_at) <= new Date(peerLastRead);
           const status = !mine
             ? undefined
             : m._failed
               ? "failed"
               : m._pending
                 ? "sending"
-                : "sent";
+                : readByPeer
+                  ? "read"
+                  : "sent";
           return (
             <MessageBubble
               text={copiedId === m.id ? "Kopyalandı ✓" : body}
@@ -303,41 +394,117 @@ export default function ChatScreen({ route, navigation }) {
               senderName={m.sender.first_name || m.sender.username}
               showSender={isGroup && item.showSender}
               grouped={item.grouped}
-              time={m._failed ? "Göndərilmədi" : messageTime(m.created_at)}
+              time={
+                m._failed
+                  ? "Göndərilmədi"
+                  : `${messageTime(m.created_at)}${m.edited_at ? " · redaktə edilib" : ""}`
+              }
               status={status}
               undecryptable={undecryptable}
-              onLongPress={() => !undecryptable && !m._pending && handleCopy(body, m.id)}
+              onLongPress={() =>
+                !undecryptable && !m._pending && !m._failed && setActionMsg({ ...m, _body: body })
+              }
               onPress={m._failed ? () => retrySend(m) : undefined}
             />
           );
         }}
       />
 
-      <View style={[styles.inputRow, { backgroundColor: t.color.surface, borderTopColor: t.color.border, paddingBottom: insets.bottom || 8 }]}>
-        <Pressable hitSlop={8} style={styles.plus}>
-          <Ionicons name="add" size={24} color={t.color.textSecondary} />
-        </Pressable>
-        <TextInput
-          style={[
-            t.typography.body,
-            styles.input,
-            { backgroundColor: t.color.surfaceAlt, color: t.color.textPrimary, borderRadius: t.radius.lg },
-          ]}
-          placeholder="Mesaj yazın"
-          placeholderTextColor={t.color.textSecondary}
-          value={text}
-          onChangeText={setText}
-          multiline
-          editable={!blocked}
-        />
-        <Pressable
-          onPress={handleSend}
-          style={[styles.send, { backgroundColor: t.color.accent }]}
-          hitSlop={6}
-        >
-          <Ionicons name={text.trim() ? "send" : "mic"} size={18} color={t.color.textOnAccent} />
-        </Pressable>
+      <View style={{ backgroundColor: t.color.surface }}>
+        {editing ? (
+          <View style={[styles.editBar, { borderTopColor: t.color.border }]}>
+            <Ionicons name="pencil" size={14} color={t.color.accent} />
+            <Text style={[t.typography.caption, { color: t.color.textSecondary, flex: 1 }]} numberOfLines={1}>
+              Mesajı redaktə edirsiniz
+            </Text>
+            <Pressable onPress={cancelEdit} hitSlop={8}>
+              <Ionicons name="close" size={18} color={t.color.textSecondary} />
+            </Pressable>
+          </View>
+        ) : null}
+
+        <View style={[styles.inputRow, { borderTopColor: t.color.border, paddingBottom: insets.bottom || 8 }]}>
+          {!editing ? (
+            <Pressable hitSlop={8} style={styles.plus}>
+              <Ionicons name="add" size={24} color={t.color.textSecondary} />
+            </Pressable>
+          ) : null}
+          <TextInput
+            style={[
+              t.typography.body,
+              styles.input,
+              { backgroundColor: t.color.surfaceAlt, color: t.color.textPrimary, borderRadius: t.radius.lg },
+            ]}
+            placeholder={blocked ? "Mesaj göndərmək olmur" : "Mesaj yazın"}
+            placeholderTextColor={t.color.textSecondary}
+            value={text}
+            onChangeText={setText}
+            multiline
+            editable={!blocked}
+          />
+          <Pressable
+            onPress={editing ? handleSaveEdit : handleSend}
+            style={[styles.send, { backgroundColor: t.color.accent }]}
+            hitSlop={6}
+          >
+            <Ionicons
+              name={editing ? "checkmark" : text.trim() ? "send" : "mic"}
+              size={18}
+              color={t.color.textOnAccent}
+            />
+          </Pressable>
+        </View>
       </View>
+
+      <PeerProfileSheet
+        visible={peerOpen}
+        onClose={() => setPeerOpen(false)}
+        user={otherUser}
+        conversationId={conversationId}
+      />
+
+      <BottomSheet visible={!!actionMsg} onClose={() => setActionMsg(null)}>
+        {actionMsg ? (
+          <View style={[styles.actionCard, { borderColor: t.color.border }]}>
+            <Pressable
+              onPress={() => {
+                handleCopy(actionMsg._body, actionMsg.id);
+                setActionMsg(null);
+              }}
+              style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
+            >
+              <Ionicons name="copy-outline" size={19} color={t.color.textPrimary} />
+              <Text style={[t.typography.body, { fontSize: 15, color: t.color.textPrimary }]}>Kopyala</Text>
+            </Pressable>
+
+            {actionMsg.sender.id === user.id ? (
+              <>
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
+                <Pressable
+                  onPress={() => startEdit(actionMsg)}
+                  style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
+                >
+                  <Ionicons name="pencil-outline" size={19} color={t.color.textPrimary} />
+                  <Text style={[t.typography.body, { fontSize: 15, color: t.color.textPrimary }]}>Redaktə et</Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {actionMsg.sender.id === user.id || (isGroup && iAmAdmin) ? (
+              <>
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
+                <Pressable
+                  onPress={() => handleDelete(actionMsg)}
+                  style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
+                >
+                  <Ionicons name="trash-outline" size={19} color={t.color.danger} />
+                  <Text style={[t.typography.body, { fontSize: 15, color: t.color.danger }]}>Sil</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+      </BottomSheet>
     </KeyboardAvoidingView>
   );
 }
@@ -368,4 +535,14 @@ const styles = StyleSheet.create({
   plus: { height: 40, justifyContent: "center" },
   input: { flex: 1, maxHeight: 120, paddingHorizontal: 14, paddingVertical: 9 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  editBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  actionCard: { borderWidth: 1, borderRadius: 16, overflow: "hidden" },
+  action: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
 });

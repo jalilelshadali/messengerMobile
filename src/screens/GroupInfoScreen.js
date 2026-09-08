@@ -5,9 +5,11 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import Avatar from "../components/Avatar";
+import BottomSheet from "../components/BottomSheet";
 import Button from "../components/Button";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Input from "../components/Input";
+import Row from "../components/Row";
 import SearchBar from "../components/SearchBar";
 import SectionHeader from "../components/SectionHeader";
 import { searchUsers } from "../api/auth";
@@ -18,6 +20,7 @@ import {
   removeMember,
   renameConversation,
   setConversationAdmin,
+  setConversationAdminsOnly,
 } from "../api/chat";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
@@ -39,6 +42,8 @@ export default function GroupInfoScreen({ route, navigation }) {
   const [search, setSearch] = useState("");
   const [candidates, setCandidates] = useState([]);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [memberSheet, setMemberSheet] = useState(null); // seçilmiş üzv
+  const [savingAdminsOnly, setSavingAdminsOnly] = useState(false);
 
   const load = useCallback(() => {
     fetchConversation(conversationId).then(({ data }) => {
@@ -82,8 +87,23 @@ export default function GroupInfoScreen({ route, navigation }) {
   }
 
   async function toggleAdmin(userId, makeAdmin) {
+    setMemberSheet(null);
     await setConversationAdmin(conversationId, userId, makeAdmin);
     load();
+  }
+
+  async function toggleAdminsOnly(next) {
+    setSavingAdminsOnly(true);
+    // Optimistik
+    setConversation((c) => ({ ...c, admins_only: next }));
+    try {
+      const { data } = await setConversationAdminsOnly(conversationId, next);
+      setConversation(data);
+    } catch {
+      setConversation((c) => ({ ...c, admins_only: !next }));
+    } finally {
+      setSavingAdminsOnly(false);
+    }
   }
 
   async function leave() {
@@ -162,14 +182,42 @@ export default function GroupInfoScreen({ route, navigation }) {
               </View>
             ) : null}
 
+            {isAdmin ? (
+              <View style={[styles.settingCard, { backgroundColor: t.color.surface, borderColor: t.color.border }]}>
+                <Row
+                  first
+                  type="toggle"
+                  icon="lock-closed-outline"
+                  title="Yalnız adminlər yaza bilər"
+                  hint="Digər üzvlər mesaj göndərə bilməz"
+                  toggleValue={!!conversation.admins_only}
+                  onToggle={savingAdminsOnly ? undefined : toggleAdminsOnly}
+                />
+              </View>
+            ) : conversation.admins_only ? (
+              <View style={[styles.adminsOnlyHint, { backgroundColor: t.color.accentMuted }]}>
+                <Ionicons name="lock-closed" size={14} color={t.color.accent} />
+                <Text style={[t.typography.caption, { color: t.color.textSecondary, flex: 1 }]}>
+                  Bu qrupda yalnız adminlər mesaj yaza bilər.
+                </Text>
+              </View>
+            ) : null}
+
             <SectionHeader title={`Üzvlər (${conversation.participants.length})`} />
           </View>
         }
         renderItem={({ item }) => {
           const memberIsAdmin = conversation.admin_ids.includes(item.id);
           const isMe = item.id === me.id;
+          const actionable = isAdmin && !isMe;
           return (
-            <View style={[styles.member, { backgroundColor: t.color.surface }]}>
+            <Pressable
+              onPress={() => actionable && setMemberSheet(item)}
+              style={({ pressed }) => [
+                styles.member,
+                { backgroundColor: pressed && actionable ? t.color.surfaceAlt : t.color.surface },
+              ]}
+            >
               <Avatar name={nameOf(item)} size={44} />
               <View style={{ flex: 1 }}>
                 <Text style={[t.typography.bodySm, { fontSize: 15, color: t.color.textPrimary }]}>
@@ -182,17 +230,10 @@ export default function GroupInfoScreen({ route, navigation }) {
                   <Text style={[t.typography.label, { color: t.color.accent }]}>Admin</Text>
                 </View>
               ) : null}
-              {isAdmin && !isMe ? (
-                <View style={styles.memberActions}>
-                  <Pressable onPress={() => toggleAdmin(item.id, !memberIsAdmin)} hitSlop={6}>
-                    <Ionicons name={memberIsAdmin ? "shield" : "shield-outline"} size={20} color={t.color.accent} />
-                  </Pressable>
-                  <Pressable onPress={() => remove(item.id)} hitSlop={6}>
-                    <Ionicons name="close-circle-outline" size={20} color={t.color.danger} />
-                  </Pressable>
-                </View>
+              {actionable ? (
+                <Ionicons name="ellipsis-vertical" size={18} color={t.color.textSecondary} />
               ) : null}
-            </View>
+            </Pressable>
           );
         }}
         ItemSeparatorComponent={() => <View style={[styles.sep, { backgroundColor: t.color.border }]} />}
@@ -220,6 +261,57 @@ export default function GroupInfoScreen({ route, navigation }) {
         }}
         onCancel={() => setConfirmLeave(false)}
       />
+
+      <BottomSheet visible={!!memberSheet} onClose={() => setMemberSheet(null)}>
+        {memberSheet ? (
+          <View>
+            <View style={styles.sheetHead}>
+              <Avatar name={nameOf(memberSheet)} size={52} />
+              <Text style={[t.typography.title, { fontSize: 17, color: t.color.textPrimary, marginTop: 8 }]}>
+                {nameOf(memberSheet)}
+              </Text>
+              <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>
+                @{memberSheet.username}
+              </Text>
+            </View>
+            <View style={[styles.settingCard, { backgroundColor: t.color.surface, borderColor: t.color.border, marginTop: 4 }]}>
+              <Pressable
+                onPress={() =>
+                  toggleAdmin(memberSheet.id, !conversation.admin_ids.includes(memberSheet.id))
+                }
+                style={({ pressed }) => [styles.sheetAction, pressed && { backgroundColor: t.color.surfaceAlt }]}
+              >
+                <Ionicons
+                  name={conversation.admin_ids.includes(memberSheet.id) ? "shield" : "shield-outline"}
+                  size={19}
+                  color={t.color.accent}
+                />
+                <Text style={[t.typography.body, { fontSize: 15, color: t.color.textPrimary }]}>
+                  {conversation.admin_ids.includes(memberSheet.id) ? "Adminliyi ləğv et" : "Admin təyin et"}
+                </Text>
+              </Pressable>
+              <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
+              <Pressable
+                onPress={() => {
+                  const id = memberSheet.id;
+                  setMemberSheet(null);
+                  remove(id);
+                }}
+                style={({ pressed }) => [styles.sheetAction, pressed && { backgroundColor: t.color.surfaceAlt }]}
+              >
+                <Ionicons name="close-circle-outline" size={19} color={t.color.danger} />
+                <Text style={[t.typography.body, { fontSize: 15, color: t.color.danger }]}>Qrupdan çıxar</Text>
+              </Pressable>
+            </View>
+            <Button
+              title="Bağla"
+              variant="secondary"
+              onPress={() => setMemberSheet(null)}
+              style={{ marginTop: 14 }}
+            />
+          </View>
+        ) : null}
+      </BottomSheet>
     </View>
   );
 }
@@ -246,4 +338,16 @@ const styles = StyleSheet.create({
   memberActions: { flexDirection: "row", gap: 12 },
   badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 72 },
+  settingCard: { marginHorizontal: 16, marginTop: 4, marginBottom: 8, borderWidth: 1, borderRadius: 16, overflow: "hidden" },
+  adminsOnlyHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 12,
+  },
+  sheetHead: { alignItems: "center", paddingBottom: 8 },
+  sheetAction: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingVertical: 14 },
 });

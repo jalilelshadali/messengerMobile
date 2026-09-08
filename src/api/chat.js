@@ -33,6 +33,25 @@ export function renameConversation(conversationId, name) {
   return client.patch(`/chat/conversations/${conversationId}/rename/`, { name });
 }
 
+// Yalnız adminlər yaza bilər rejimi (qrup admini aç/bağla edir).
+export function setConversationAdminsOnly(conversationId, adminsOnly) {
+  return client.patch(`/chat/conversations/${conversationId}/settings/`, {
+    admins_only: adminsOnly,
+  });
+}
+
+export function editMessage(conversationId, messageId, payload) {
+  // payload: { text } qrup üçün, { ciphertext, nonce } DM üçün
+  return client.patch(
+    `/chat/conversations/${conversationId}/messages/${messageId}/`,
+    payload
+  );
+}
+
+export function deleteMessage(conversationId, messageId) {
+  return client.delete(`/chat/conversations/${conversationId}/messages/${messageId}/`);
+}
+
 export function addMembers(conversationId, memberIds) {
   return client.post(`/chat/conversations/${conversationId}/members/`, { member_ids: memberIds });
 }
