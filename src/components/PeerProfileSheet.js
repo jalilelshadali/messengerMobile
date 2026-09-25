@@ -34,8 +34,6 @@ export default function PeerProfileSheet({ visible, onClose, user, conversationI
 
   const chips = [];
   chips.push(formatDegree(user.degree));
-  if (user.unit_name) chips.push(user.unit_name);
-  if (user.section_name) chips.push(user.section_name);
   if (user.joined_at) chips.push(`Üzv: ${new Date(user.joined_at).getFullYear()}`);
 
   return (
@@ -67,8 +65,9 @@ export default function PeerProfileSheet({ visible, onClose, user, conversationI
       </View>
 
       <View style={[styles.card, { borderColor: t.color.border }]}>
+        <Row type="plain" first icon="business-outline" title="Böyük Loja" value={user.unit_name || "Təyin edilməyib"} />
+        <Row type="plain" icon="people-outline" title="Möhtərəm Loja" value={user.section_name || "Təyin edilməyib"} />
         <Row
-          first
           type="toggle"
           icon="notifications-off-outline"
           title="Səssiz et"

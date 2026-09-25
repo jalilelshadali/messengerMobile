@@ -14,6 +14,7 @@ import SectionHeader from "../components/SectionHeader";
 import { fetchConversations } from "../api/chat";
 import { useAuth } from "../context/AuthContext";
 import { decryptFromSender, getOrCreateIdentityKeyPair } from "../crypto";
+import { describeBody } from "../lib/attachments";
 import { chatListTime, messageTime } from "../lib/format";
 import { rememberMessages, searchMessages } from "../lib/messageStore";
 import { useTheme } from "../theme";
@@ -30,12 +31,12 @@ function conversationTitle(c, meId) {
 function previewFor(c, meId, mySecretKey) {
   const last = c.last_message;
   if (!last) return "Hələ mesaj yoxdur";
-  if (c.is_group) return last.text || "";
-  if (!last.ciphertext) return last.text || "";
+  if (c.is_group) return describeBody(last.text || "");
+  if (!last.ciphertext) return describeBody(last.text || "");
   const other = c.participants.find((p) => p.id !== meId);
   if (!other?.public_key || !mySecretKey) return "🔒 Şifrələnmiş mesaj";
   const decrypted = decryptFromSender(last.ciphertext, last.nonce, other.public_key, mySecretKey);
-  return decrypted === null ? "🔒 Şifrələnmiş mesaj" : decrypted;
+  return decrypted === null ? "🔒 Şifrələnmiş mesaj" : describeBody(decrypted);
 }
 
 export default function ChatListScreen({ navigation }) {
@@ -98,6 +99,7 @@ export default function ChatListScreen({ navigation }) {
             : null;
       }
       if (!body) continue;
+      body = describeBody(body);
       rememberMessages(
         c.id,
         { name: conversationTitle(c, user.id), isGroup: c.is_group },

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Animated, Dimensions, Modal, Pressable, StyleSheet, View } from "react-native";
+import { Animated, Dimensions, KeyboardAvoidingView, Modal, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../theme";
@@ -25,32 +25,32 @@ export default function BottomSheet({ visible, onClose, children }) {
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={[styles.backdrop, { backgroundColor: t.color.overlay }]} onPress={onClose} />
-      <Animated.View
-        style={[
-          styles.sheet,
-          {
-            backgroundColor: t.color.surface,
-            borderColor: t.color.border,
-            paddingBottom: insets.bottom + 16,
-            transform: [{ translateY }],
-          },
-          t.shadow.lg,
-        ]}
-      >
-        <View style={[styles.handle, { backgroundColor: t.color.border }]} />
-        {children}
-      </Animated.View>
+      {/* Edge-to-edge-də adjustResize işləmir — klaviatura üçün KAV lazımdır. */}
+      <KeyboardAvoidingView behavior="padding" style={styles.kav}>
+        <Animated.View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: t.color.surface,
+              borderColor: t.color.border,
+              paddingBottom: insets.bottom + 16,
+              transform: [{ translateY }],
+            },
+            t.shadow.lg,
+          ]}
+        >
+          <View style={[styles.handle, { backgroundColor: t.color.border }]} />
+          {children}
+        </Animated.View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject },
+  kav: { flex: 1, justifyContent: "flex-end", pointerEvents: "box-none" },
   sheet: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
     maxHeight: "88%",
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,

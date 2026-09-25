@@ -3,9 +3,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
+import BottomSheet from "../components/BottomSheet";
+import Button from "../components/Button";
 import Card from "../components/Card";
 import EmptyState from "../components/EmptyState";
+import Input from "../components/Input";
 import { fetchMeetings, respondToMeeting } from "../api/meetings";
+import { useAuth } from "../context/AuthContext";
 import { fullDateTime } from "../lib/format";
 import { useTheme } from "../theme";
 
@@ -33,20 +37,39 @@ function DateChip({ iso }) {
 
 function MeetingCard({ meeting, onResponded }) {
   const t = useTheme();
+  const { user } = useAuth();
   const [busy, setBusy] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState("");
   const locked = meeting.can_respond === false;
 
-  async function respond(value) {
+  async function respond(value, why = "") {
     setBusy(true);
     try {
-      const { data } = await respondToMeeting(meeting.id, value);
+      const { data } = await respondToMeeting(meeting.id, value, why.trim().slice(0, 300));
       onResponded(data);
+      setReasonOpen(false);
     } finally {
       setBusy(false);
     }
   }
 
   const mine = meeting.my_response;
+  const myInvite = meeting.invites?.find((i) => i.user.id === user.id);
+  const isOrganiser = user.is_staff || meeting.created_by === user.id;
+  const yes = meeting.invites?.filter((i) => i.response === "yes").length ?? 0;
+  const pending = meeting.invites?.filter((i) => i.response === "pending").length ?? 0;
+  const decliners = meeting.invites?.filter((i) => i.response === "no") ?? [];
+
+  function onPressChoice(v) {
+    if (busy) return;
+    if (v === "no") {
+      setReason(myInvite?.reason || "");
+      setReasonOpen(true);
+    } else {
+      respond("yes");
+    }
+  }
 
   return (
     <Card style={[styles.card, locked && { opacity: 0.55 }]}>
@@ -81,7 +104,7 @@ function MeetingCard({ meeting, onResponded }) {
             return (
               <Pressable
                 key={v}
-                onPress={() => !busy && respond(v)}
+                onPress={() => onPressChoice(v)}
                 style={[styles.segBtn, { backgroundColor: bg, borderRadius: t.radius.md }]}
               >
                 <Text style={[t.typography.body, { fontSize: 14, color: fg }]}>
@@ -92,6 +115,40 @@ function MeetingCard({ meeting, onResponded }) {
           })}
         </View>
       ) : null}
+
+      {mine === "no" && myInvite?.reason ? (
+        <Text style={[t.typography.caption, { color: t.color.textSecondary, marginTop: 8 }]}>
+          Səbəbiniz: {myInvite.reason}
+        </Text>
+      ) : null}
+
+      {isOrganiser && meeting.invites?.length ? (
+        <View style={[styles.summary, { borderTopColor: t.color.border }]}>
+          <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>
+            ✓ {yes} gəlir · ✕ {decliners.length} gəlmir · ⏳ {pending} cavabsız
+          </Text>
+          {decliners.map((i) => (
+            <Text key={i.id} style={[t.typography.caption, { color: t.color.textPrimary, marginTop: 4 }]}>
+              {`${i.user.first_name || ""} ${i.user.last_name || ""}`.trim() || i.user.username}
+              {i.reason ? ` — ${i.reason}` : ""}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      <BottomSheet visible={reasonOpen} onClose={() => setReasonOpen(false)}>
+        <Text style={[t.typography.title, { color: t.color.textPrimary, marginBottom: 4 }]}>Gələ bilmirsiniz?</Text>
+        <Text style={[t.typography.caption, { color: t.color.textSecondary, marginBottom: 12 }]}>
+          {meeting.title} — təşkilatçı səbəbi görəcək.
+        </Text>
+        <Input
+          label="Səbəb (istəyə bağlı)"
+          value={reason}
+          onChangeText={setReason}
+          placeholder="Məsələn: ezamiyyətdəyəm"
+        />
+        <Button title="Təsdiq et" onPress={() => respond("no", reason)} loading={busy} style={{ marginTop: 14 }} />
+      </BottomSheet>
     </Card>
   );
 }
@@ -174,5 +231,6 @@ const styles = StyleSheet.create({
   dateChip: { width: 52, height: 52, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 3 },
   segment: { flexDirection: "row", gap: 8, marginTop: 14 },
+  summary: { marginTop: 12, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth },
   segBtn: { flex: 1, paddingVertical: 10, alignItems: "center" },
 });

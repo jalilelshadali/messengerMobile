@@ -17,6 +17,7 @@ const light = {
   accentLine: "#C9A227", // dekor: nöqtə, altxətt, tab indikatoru
   accentMuted: "#F3EAD2",
   success: "#2F7D52",
+  tickRead: "#1E88E5", // "oxundu" qoşa quş (WhatsApp mavisi)
   danger: "#B5240C",
   unread: "#8A6A1C",
   bubbleMine: "#F3EAD2",
@@ -37,6 +38,7 @@ const dark = {
   accentLine: "#C9A227",
   accentMuted: "#2E2A1C",
   success: "#4CAE7C",
+  tickRead: "#53BDEB",
   danger: "#F2624A",
   unread: "#D4AF37",
   bubbleMine: "#3A3220",

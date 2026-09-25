@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import Avatar from "../components/Avatar";
 import Button from "../components/Button";
@@ -13,8 +14,14 @@ import { useTheme } from "../theme";
 
 export default function ProfileScreen({ navigation }) {
   const t = useTheme();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const [confirmOut, setConfirmOut] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshUser();
+    }, [refreshUser])
+  );
 
   const fullName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || user.username;
 
@@ -29,6 +36,14 @@ export default function ProfileScreen({ navigation }) {
         </View>
         <Text style={[t.typography.title, { color: t.color.textPrimary, marginTop: 12 }]}>{fullName}</Text>
         <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>@{user.username}</Text>
+        {user.section_name ? (
+          <View style={[styles.tag, { backgroundColor: t.color.accentMuted }]}>
+            <Ionicons name="business-outline" size={12} color={t.color.accent} />
+            <Text style={[t.typography.caption, { color: t.color.accent, fontFamily: "Archivo-SemiBold" }]}>
+              {user.unit_name} · {user.section_name}
+            </Text>
+          </View>
+        ) : null}
         {user.is_staff ? (
           <View style={[styles.tag, { backgroundColor: t.color.accentMuted }]}>
             <Ionicons name="shield-checkmark" size={12} color={t.color.accent} />
@@ -47,12 +62,10 @@ export default function ProfileScreen({ navigation }) {
         />
       </Card>
 
-      {user.unit_name ? (
-        <Card padded={false} style={styles.card}>
-          <Row type="plain" first icon="business-outline" title="Böyük Loja" value={user.unit_name} />
-          <Row type="plain" icon="people-outline" title="Möhtərəm Loja" value={user.section_name} />
-        </Card>
-      ) : null}
+      <Card padded={false} style={styles.card}>
+        <Row type="plain" first icon="business-outline" title="Böyük Loja" value={user.unit_name || "Təyin edilməyib"} />
+        <Row type="plain" icon="people-outline" title="Möhtərəm Loja" value={user.section_name || "Təyin edilməyib"} />
+      </Card>
 
       <Card padded={false} style={styles.card}>
         <Row first icon="settings-outline" title="Parametrlər" onPress={() => navigation.navigate("Settings")} />

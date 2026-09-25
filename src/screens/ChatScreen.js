@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
-import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
 import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
+import * as Clipboard from "expo-clipboard";
+import * as DocumentPicker from "expo-document-picker";
+import * as Haptics from "expo-haptics";
+import * as Sharing from "expo-sharing";
+import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Pressable,
@@ -15,6 +27,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import BottomSheet from "../components/BottomSheet";
 import DateSeparator from "../components/DateSeparator";
+import ForwardSheet from "../components/ForwardSheet";
 import MessageBubble from "../components/MessageBubble";
 import PeerProfileSheet from "../components/PeerProfileSheet";
 import {
@@ -28,6 +41,15 @@ import {
 } from "../api/chat";
 import { useAuth } from "../context/AuthContext";
 import { decryptFromSender, encryptForRecipient, getOrCreateIdentityKeyPair } from "../crypto";
+import {
+  MAX_ATTACHMENT_BYTES,
+  describeBody,
+  encodeAttachmentBody,
+  formatDuration,
+  getAttachmentUri,
+  parseAttachmentBody,
+  sendAttachment,
+} from "../lib/attachments";
 import { dateSeparatorLabel, dayKey, messageTime } from "../lib/format";
 import { rememberMessages } from "../lib/messageStore";
 import { useTheme } from "../theme";
@@ -88,21 +110,37 @@ export default function ChatScreen({ route, navigation }) {
   const [adminsOnly, setAdminsOnly] = useState(false);
   const [iAmAdmin, setIAmAdmin] = useState(false);
   const [peerLastRead, setPeerLastRead] = useState(null);
+  const [peerLastDelivered, setPeerLastDelivered] = useState(null);
   const [editing, setEditing] = useState(null); // redaktə olunan mesaj
   const [actionMsg, setActionMsg] = useState(null); // uzun basılan mesaj
+  const [forwardMsg, setForwardMsg] = useState(null); // yönləndirilən mesaj
+  const [notice, setNotice] = useState(null);
   const listRef = useRef(null);
+
+  // Səs yazma / oxutma (bir oxuducu — eyni anda bir səs mesajı).
+  const recorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const recState = useAudioRecorderState(recorder);
+  const player = useAudioPlayer(null);
+  const pStatus = useAudioPlayerStatus(player);
+  const [recording, setRecording] = useState(false);
+  const [voiceId, setVoiceId] = useState(null);
+  const [voiceLoading, setVoiceLoading] = useState(null);
+  const [fileBusyId, setFileBusyId] = useState(null);
 
   function applyConversation(data) {
     if (isGroup) {
       setPresence(`${data.participants.length} üzv`);
       setAdminsOnly(!!data.admins_only);
       setIAmAdmin(!!data.is_admin);
+      setPeerLastRead(data.peer_last_read || null);
+      setPeerLastDelivered(data.peer_last_delivered || null);
     } else {
       const other = data.participants.find((p) => p.id !== user.id);
       setOtherUser(other || null);
       setOtherPublicKey(other?.public_key || "");
       setPresence("uçdan-uca şifrəli");
       setPeerLastRead(data.peer_last_read || null);
+      setPeerLastDelivered(data.peer_last_delivered || null);
     }
   }
 
@@ -124,7 +162,6 @@ export default function ChatScreen({ route, navigation }) {
 
   useEffect(() => {
     let active = true;
-    let tick = 0;
     async function poll() {
       try {
         const { data } = await fetchMessages(conversationId);
@@ -136,13 +173,10 @@ export default function ChatScreen({ route, navigation }) {
           return [...data, ...localOnly];
         });
         markConversationRead(conversationId).catch(() => {});
-        // Söhbət metasını (oxundu, admin rejimi) hərdən yenilə.
-        tick += 1;
-        if (tick % 2 === 1) {
-          fetchConversation(conversationId)
-            .then(({ data: c }) => active && applyConversation(c))
-            .catch(() => {});
-        }
+        // Söhbət metasını (çatdı/oxundu quşları, admin rejimi) yenilə.
+        fetchConversation(conversationId)
+          .then(({ data: c }) => active && applyConversation(c))
+          .catch(() => {});
       } catch {
         /* offline */
       }
@@ -177,7 +211,7 @@ export default function ChatScreen({ route, navigation }) {
         if (!body) return null;
         return {
           id: m.id,
-          text: body,
+          text: describeBody(body),
           from: m.sender.first_name || m.sender.username,
           at: m.created_at,
           mine: m.sender.id === user.id,
@@ -283,6 +317,161 @@ export default function ChatScreen({ route, navigation }) {
     setTimeout(() => setCopiedId((p) => (p === id ? null : p)), 1400);
   }
 
+  function flash(message) {
+    setNotice(message);
+    setTimeout(() => setNotice(null), 2600);
+  }
+
+  // Qoşma göndər: optimistik (yüklənir…), alınmasa mesaj silinir + xəbərdarlıq.
+  async function postAttachment(kind, asset) {
+    const tmpId = `tmp-${Date.now()}`;
+    const meta = {
+      kind,
+      name: asset.name,
+      mime: asset.mime,
+      size: asset.size,
+      ...(asset.dur ? { dur: asset.dur } : {}),
+    };
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tmpId,
+        sender: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          username: user.username,
+        },
+        text: encodeAttachmentBody(meta),
+        ciphertext: "",
+        nonce: "",
+        created_at: new Date().toISOString(),
+        _pending: true,
+      },
+    ]);
+    try {
+      const { data } = await sendAttachment({
+        conversationId,
+        isGroup,
+        kind,
+        asset,
+        otherPublicKey,
+        mySecretKey,
+      });
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === data.id)) return prev.filter((m) => m.id !== tmpId);
+        return prev.map((m) => (m.id === tmpId ? data : m));
+      });
+    } catch {
+      setMessages((prev) => prev.filter((m) => m.id !== tmpId));
+      flash("Qoşma göndərilə bilmədi");
+    }
+  }
+
+  async function pickFile() {
+    if (blocked) return;
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false });
+      if (res.canceled || !res.assets?.length) return;
+      const a = res.assets[0];
+      if (a.size && a.size > MAX_ATTACHMENT_BYTES) {
+        flash("Fayl 15 MB-dan böyük ola bilməz");
+        return;
+      }
+      postAttachment("file", { uri: a.uri, name: a.name, mime: a.mimeType, size: a.size });
+    } catch {
+      flash("Fayl seçilə bilmədi");
+    }
+  }
+
+  async function startRecording() {
+    if (blocked) return;
+    try {
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Mikrofon icazəsi lazımdır", "Səs yazmaq üçün telefon parametrlərindən mikrofona icazə verin.");
+        return;
+      }
+      player.pause();
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      setRecording(true);
+    } catch {
+      flash("Səs yazılmağa başlaya bilmədi");
+    }
+  }
+
+  async function stopRecorder() {
+    setRecording(false);
+    try {
+      await recorder.stop();
+    } catch {
+      /* artıq dayanıb */
+    }
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+  }
+
+  async function cancelRecording() {
+    await stopRecorder();
+  }
+
+  async function finishRecording() {
+    const secs = (recState.durationMillis || 0) / 1000;
+    await stopRecorder();
+    const uri = recorder.uri;
+    if (!uri || secs < 1) return; // çox qısa — təsadüfi toxunuş
+    postAttachment("voice", {
+      uri,
+      name: `voice-${Date.now()}.m4a`,
+      mime: "audio/mp4",
+      size: 0,
+      dur: Math.round(secs),
+    });
+  }
+
+  async function toggleVoice(m, meta) {
+    if (String(m.id).startsWith("tmp-")) return;
+    if (voiceId === m.id) {
+      if (pStatus.playing) {
+        player.pause();
+      } else {
+        if (pStatus.duration && pStatus.currentTime >= pStatus.duration - 0.1) await player.seekTo(0);
+        player.play();
+      }
+      return;
+    }
+    setVoiceLoading(m.id);
+    try {
+      const uri = await getAttachmentUri(conversationId, m.id, meta);
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
+      player.replace(uri);
+      setVoiceId(m.id);
+      player.play();
+    } catch {
+      flash("Səs mesajı açıla bilmədi");
+    } finally {
+      setVoiceLoading(null);
+    }
+  }
+
+  async function openFile(m, meta) {
+    if (String(m.id).startsWith("tmp-")) return;
+    setFileBusyId(m.id);
+    try {
+      const uri = await getAttachmentUri(conversationId, m.id, meta);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: meta.mime, dialogTitle: meta.name });
+      } else {
+        flash("Bu cihazda faylı açmaq mümkün deyil");
+      }
+    } catch {
+      flash("Fayl açıla bilmədi");
+    } finally {
+      setFileBusyId(null);
+    }
+  }
+
   const keyMissing = !isGroup && !otherPublicKey && mySecretKey;
   const adminOnlyLock = isGroup && adminsOnly && !iAmAdmin;
   const blocked = keyMissing || adminOnlyLock;
@@ -359,6 +548,14 @@ export default function ChatScreen({ route, navigation }) {
         </View>
       )}
 
+      {notice ? (
+        <View style={styles.e2eePill}>
+          <View style={[styles.pill, { backgroundColor: t.color.accent }]}>
+            <Text style={[t.typography.caption, { color: t.color.textOnAccent }]}>{notice}</Text>
+          </View>
+        </View>
+      ) : null}
+
       <FlatList
         ref={listRef}
         data={items}
@@ -371,13 +568,25 @@ export default function ChatScreen({ route, navigation }) {
           const mine = m.sender.id === user.id;
           const body = isGroup || !m.ciphertext ? m.text : decryptDirect(m, otherPublicKey, mySecretKey);
           const undecryptable = !isGroup && m.ciphertext && body === null;
-          const readByPeer =
-            mine &&
-            !isGroup &&
-            peerLastRead &&
-            !m._pending &&
-            !m._failed &&
-            new Date(m.created_at) <= new Date(peerLastRead);
+          const attMeta = undecryptable ? null : parseAttachmentBody(body);
+          const isThisVoice = attMeta?.kind === "voice" && voiceId === m.id;
+          const voice =
+            attMeta?.kind === "voice"
+              ? {
+                  playing: isThisVoice && pStatus.playing,
+                  loading: voiceLoading === m.id,
+                  progress: isThisVoice && pStatus.duration ? Math.min(1, pStatus.currentTime / pStatus.duration) : 0,
+                  position: isThisVoice ? pStatus.currentTime : attMeta.dur,
+                  onToggle: () => toggleVoice(m, attMeta),
+                }
+              : null;
+          // 1 boz quş = serverə çatdı, 2 boz = qarşı tərəfin cihazına çatdı,
+          // 2 mavi = oxundu. Qrupda hamı çatdıqda/oxuduqda dəyişir.
+          const settled = mine && !m._pending && !m._failed;
+          const at = new Date(m.created_at);
+          const readByPeer = settled && peerLastRead && at <= new Date(peerLastRead);
+          const deliveredToPeer =
+            settled && peerLastDelivered && at <= new Date(peerLastDelivered);
           const status = !mine
             ? undefined
             : m._failed
@@ -386,7 +595,9 @@ export default function ChatScreen({ route, navigation }) {
                 ? "sending"
                 : readByPeer
                   ? "read"
-                  : "sent";
+                  : deliveredToPeer
+                    ? "delivered"
+                    : "sent";
           return (
             <MessageBubble
               text={copiedId === m.id ? "Kopyalandı ✓" : body}
@@ -401,6 +612,10 @@ export default function ChatScreen({ route, navigation }) {
               }
               status={status}
               undecryptable={undecryptable}
+              attachment={attMeta}
+              voice={voice}
+              fileBusy={fileBusyId === m.id}
+              onOpenFile={() => openFile(m, attMeta)}
               onLongPress={() =>
                 !undecryptable && !m._pending && !m._failed && setActionMsg({ ...m, _body: body })
               }
@@ -423,37 +638,55 @@ export default function ChatScreen({ route, navigation }) {
           </View>
         ) : null}
 
-        <View style={[styles.inputRow, { borderTopColor: t.color.border, paddingBottom: insets.bottom || 8 }]}>
-          {!editing ? (
-            <Pressable hitSlop={8} style={styles.plus}>
-              <Ionicons name="add" size={24} color={t.color.textSecondary} />
+        {recording ? (
+          <View style={[styles.inputRow, { borderTopColor: t.color.border, paddingBottom: insets.bottom || 8, alignItems: "center" }]}>
+            <Pressable onPress={cancelRecording} hitSlop={8} style={styles.plus}>
+              <Ionicons name="trash-outline" size={24} color={t.color.danger} />
             </Pressable>
-          ) : null}
-          <TextInput
-            style={[
-              t.typography.body,
-              styles.input,
-              { backgroundColor: t.color.surfaceAlt, color: t.color.textPrimary, borderRadius: t.radius.lg },
-            ]}
-            placeholder={blocked ? "Mesaj göndərmək olmur" : "Mesaj yazın"}
-            placeholderTextColor={t.color.textSecondary}
-            value={text}
-            onChangeText={setText}
-            multiline
-            editable={!blocked}
-          />
-          <Pressable
-            onPress={editing ? handleSaveEdit : handleSend}
-            style={[styles.send, { backgroundColor: t.color.accent }]}
-            hitSlop={6}
-          >
-            <Ionicons
-              name={editing ? "checkmark" : text.trim() ? "send" : "mic"}
-              size={18}
-              color={t.color.textOnAccent}
+            <View style={[styles.recPill, { backgroundColor: t.color.surfaceAlt, borderRadius: t.radius.lg }]}>
+              <View style={[styles.recDot, { backgroundColor: t.color.danger }]} />
+              <Text style={[t.typography.body, { color: t.color.textPrimary }]}>
+                {formatDuration((recState.durationMillis || 0) / 1000)}
+              </Text>
+              <Text style={[t.typography.caption, { color: t.color.textSecondary }]}>Yazılır…</Text>
+            </View>
+            <Pressable onPress={finishRecording} style={[styles.send, { backgroundColor: t.color.accent }]} hitSlop={6}>
+              <Ionicons name="send" size={18} color={t.color.textOnAccent} />
+            </Pressable>
+          </View>
+        ) : (
+          <View style={[styles.inputRow, { borderTopColor: t.color.border, paddingBottom: insets.bottom || 8 }]}>
+            {!editing ? (
+              <Pressable onPress={pickFile} hitSlop={8} style={styles.plus}>
+                <Ionicons name="attach" size={24} color={t.color.textSecondary} />
+              </Pressable>
+            ) : null}
+            <TextInput
+              style={[
+                t.typography.body,
+                styles.input,
+                { backgroundColor: t.color.surfaceAlt, color: t.color.textPrimary, borderRadius: t.radius.lg },
+              ]}
+              placeholder={blocked ? "Mesaj göndərmək olmur" : "Mesaj yazın"}
+              placeholderTextColor={t.color.textSecondary}
+              value={text}
+              onChangeText={setText}
+              multiline
+              editable={!blocked}
             />
-          </Pressable>
-        </View>
+            <Pressable
+              onPress={editing ? handleSaveEdit : text.trim() ? handleSend : startRecording}
+              style={[styles.send, { backgroundColor: t.color.accent }]}
+              hitSlop={6}
+            >
+              <Ionicons
+                name={editing ? "checkmark" : text.trim() ? "send" : "mic"}
+                size={18}
+                color={t.color.textOnAccent}
+              />
+            </Pressable>
+          </View>
+        )}
       </View>
 
       <PeerProfileSheet
@@ -463,21 +696,48 @@ export default function ChatScreen({ route, navigation }) {
         conversationId={conversationId}
       />
 
+      <ForwardSheet
+        visible={!!forwardMsg}
+        text={forwardMsg?._body || ""}
+        onClose={() => setForwardMsg(null)}
+        onDone={({ sent, failed }) => {
+          setForwardMsg(null);
+          setNotice(failed ? `${sent} göndərildi, ${failed} alınmadı` : "Mesaj yönləndirildi ✓");
+          setTimeout(() => setNotice(null), 2200);
+        }}
+      />
+
       <BottomSheet visible={!!actionMsg} onClose={() => setActionMsg(null)}>
         {actionMsg ? (
           <View style={[styles.actionCard, { borderColor: t.color.border }]}>
-            <Pressable
-              onPress={() => {
-                handleCopy(actionMsg._body, actionMsg.id);
-                setActionMsg(null);
-              }}
-              style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
-            >
-              <Ionicons name="copy-outline" size={19} color={t.color.textPrimary} />
-              <Text style={[t.typography.body, { fontSize: 15, color: t.color.textPrimary }]}>Kopyala</Text>
-            </Pressable>
+            {!parseAttachmentBody(actionMsg._body) ? (
+              <>
+                <Pressable
+                  onPress={() => {
+                    handleCopy(actionMsg._body, actionMsg.id);
+                    setActionMsg(null);
+                  }}
+                  style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
+                >
+                  <Ionicons name="copy-outline" size={19} color={t.color.textPrimary} />
+                  <Text style={[t.typography.body, { fontSize: 15, color: t.color.textPrimary }]}>Kopyala</Text>
+                </Pressable>
 
-            {actionMsg.sender.id === user.id ? (
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
+                <Pressable
+                  onPress={() => {
+                    setForwardMsg(actionMsg);
+                    setActionMsg(null);
+                  }}
+                  style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
+                >
+                  <Ionicons name="arrow-redo-outline" size={19} color={t.color.textPrimary} />
+                  <Text style={[t.typography.body, { fontSize: 15, color: t.color.textPrimary }]}>Yönləndir</Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {actionMsg.sender.id === user.id && !parseAttachmentBody(actionMsg._body) ? (
               <>
                 <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
                 <Pressable
@@ -492,7 +752,9 @@ export default function ChatScreen({ route, navigation }) {
 
             {actionMsg.sender.id === user.id || (isGroup && iAmAdmin) ? (
               <>
-                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
+                {!parseAttachmentBody(actionMsg._body) ? (
+                  <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.color.border }} />
+                ) : null}
                 <Pressable
                   onPress={() => handleDelete(actionMsg)}
                   style={({ pressed }) => [styles.action, pressed && { backgroundColor: t.color.surfaceAlt }]}
@@ -534,6 +796,8 @@ const styles = StyleSheet.create({
   },
   plus: { height: 40, justifyContent: "center" },
   input: { flex: 1, maxHeight: 120, paddingHorizontal: 14, paddingVertical: 9 },
+  recPill: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, height: 40 },
+  recDot: { width: 10, height: 10, borderRadius: 5 },
   send: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   editBar: {
     flexDirection: "row",

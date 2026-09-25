@@ -25,6 +25,7 @@ export default function CreateMeetingScreen({ navigation }) {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [units, setUnits] = useState([]);
+  const [allUsers, setAllUsers] = useState(false);
   const [unitIds, setUnitIds] = useState([]);
   const [sectionIds, setSectionIds] = useState([]);
   const [search, setSearch] = useState("");
@@ -75,6 +76,7 @@ export default function CreateMeetingScreen({ navigation }) {
         userIds: selectedUsers.map((u) => u.id),
         sectionIds,
         unitIds,
+        allUsers,
       });
       navigation.goBack();
     } catch {
@@ -96,7 +98,18 @@ export default function CreateMeetingScreen({ navigation }) {
         </View>
       </View>
 
-      <SectionHeader title="Böyük Loja (bütün üzvlər)" />
+      <SectionHeader title="Kimə göndərilsin" />
+      <View style={styles.chipWrap}>
+        <Chip label="Hamı (bütün üzvlər)" selected={allUsers} onPress={() => setAllUsers((v) => !v)} />
+      </View>
+      {allUsers ? (
+        <Text style={[t.typography.caption, { color: t.color.textSecondary, paddingHorizontal: 16, marginTop: 8 }]}>
+          Bütün üzvlərə dəvət və bildiriş göndəriləcək.
+        </Text>
+      ) : null}
+
+      <View style={allUsers ? { opacity: 0.4 } : null} pointerEvents={allUsers ? "none" : "auto"}>
+      <SectionHeader title="Böyük Loja" />
       <View style={styles.chipWrap}>
         {units.map((u) => (
           <Chip key={u.id} label={u.name} selected={unitIds.includes(u.id)} onPress={() => toggle(unitIds, setUnitIds, u.id)} />
@@ -133,6 +146,8 @@ export default function CreateMeetingScreen({ navigation }) {
             <Chip key={u.id} label={`${nameOf(u)} ✕`} selected onPress={() => setSelectedUsers((p) => p.filter((x) => x.id !== u.id))} />
           ))}
         </View>
+      </View>
+
       </View>
 
       {error ? (

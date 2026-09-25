@@ -108,6 +108,16 @@ export function AuthProvider({ children }) {
     if (me) ensurePublicKeyUploaded(me);
   }
 
+  // Admin loja/dərəcəni dəyişə bilər — profil ekranı açılanda təzələnir.
+  const refreshUser = useCallback(async () => {
+    try {
+      const { data } = await fetchMe();
+      setUser(data);
+    } catch {
+      /* offline / token yoxdur — köhnə məlumat qalsın */
+    }
+  }, []);
+
   // App arxa plandan qayıdıб 60s+ keçibsə çağırılır.
   const lockNow = useCallback(() => {
     setAccessToken(null);
@@ -162,6 +172,7 @@ export function AuthProvider({ children }) {
         logout,
         unlock,
         lockNow,
+        refreshUser,
         completePinSetup,
         persistRotatedRefresh,
         setBiometricEnabled,

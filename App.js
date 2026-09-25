@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { AppState, View } from "react-native";
+import { AppState, Platform, View } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
+import * as ScreenCapture from "expo-screen-capture";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import {
@@ -20,9 +21,23 @@ import { ThemeProvider, useTheme } from "./src/theme";
 const RELOCK_AFTER_MS = 60_000;
 
 function AppShell() {
-  const { lockNow, locked } = useAuth();
+  const { lockNow, locked, user } = useAuth();
   const t = useTheme();
   const backgroundedAt = useRef(null);
+
+  // Giriş etdikdən sonra (və PIN kilidində) ekran görüntüsü/yazısı bloklanır.
+  // Android: FLAG_SECURE — recents önizləməsi də qara olur. iOS: yalnız
+  // ekran yazısı/AirPlay gizlənir, screenshot-u iOS tam bloklamağa icazə vermir.
+  const protectScreen = Platform.OS !== "web" && (!!user || locked);
+  useEffect(() => {
+    if (Platform.OS === "web") return undefined;
+    if (protectScreen) {
+      ScreenCapture.preventScreenCaptureAsync().catch(() => {});
+    } else {
+      ScreenCapture.allowScreenCaptureAsync().catch(() => {});
+    }
+    return undefined;
+  }, [protectScreen]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
@@ -67,12 +82,6 @@ export default function App() {
     "Archivo-SemiBold": Archivo_600SemiBold,
     "Archivo-Bold": Archivo_700Bold,
   });
-
-  // NOTE: global screen-capture prevention (FLAG_SECURE) was here. Removed
-  // while debugging an Android issue where the soft keyboard opens then
-  // instantly closes — some IMEs (Samsung Keyboard especially) refuse to
-  // attach to a FLAG_SECURE window. If this is the cause, re-add protection
-  // scoped to ChatScreen only via `usePreventScreenCapture()`.
 
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics}>

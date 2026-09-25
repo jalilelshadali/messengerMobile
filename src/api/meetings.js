@@ -4,11 +4,12 @@ export function fetchMeetings() {
   return client.get("/meetings/");
 }
 
-export function respondToMeeting(meetingId, response) {
-  return client.patch(`/meetings/${meetingId}/respond/`, { response });
+// reason: "gələ bilmərəm" cavabı üçün istəyə bağlı səbəb.
+export function respondToMeeting(meetingId, response, reason = "") {
+  return client.patch(`/meetings/${meetingId}/respond/`, { response, reason });
 }
 
-export function createMeeting({ title, description, location, startsAt, endsAt, userIds, sectionIds, unitIds }) {
+export function createMeeting({ title, description, location, startsAt, endsAt, userIds, sectionIds, unitIds, allUsers }) {
   return client.post("/meetings/create/", {
     title,
     description,
@@ -18,5 +19,6 @@ export function createMeeting({ title, description, location, startsAt, endsAt, 
     user_ids: userIds || [],
     section_ids: sectionIds || [],
     unit_ids: unitIds || [],
+    all_users: !!allUsers,
   });
 }
